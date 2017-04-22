@@ -38,14 +38,13 @@ from gui.ColorWFPlot import *
 # File import stuff
 import sys
 import csv
-sys.path.append("M:\\Lab Files\\Magnetometry\\Simulations, Theory\\Spin Hall Effect Macrospin Simulations")
-sys.path.append("X:\\Lab Files\\Magnetometry\\Simulations, Theory\\Spin Hall Effect Macrospin Simulations")
 import os
 from Tkinter import *
 import tkFileDialog as filedialog
 
 # Import analysis routines
-import SHEmacrospin_fitters as FMRfit
+import data_analysis.SHEmacrospin_calculators as macrospin_calc
+import data_analysis.SHEmacrospin_fitters as FMRfit
 
 # Import instruments
 from instruments import signalgenerators
