@@ -20,6 +20,7 @@ Created on Wed May 13 12:29:09 2015
 # Import the basics
 import numpy as _n
 import scipy as _s
+import scipy.optimize as spop
 import time
 
 # DAQ stuff
@@ -253,6 +254,7 @@ cfg_hardware.add_parameter("AO/Rate",           1e3,    type='float',   limits=(
 
 # amplifier
 cfg_hardware.add_parameter("Amp/Gain", 2500, type='int', limits=(0,10000))
+cfg_hardware.add_parameter("Amp/Attenuation", 0, type='float', limits=(None,0) , siPrefix=False, suffix='dB', dec = True, minStep = 0.01)
 
 # DC source
 cfg_hardware.add_parameter("DC/V2A",           0.02, type='float', limits=(None,None) , siPrefix=True, suffix='A/V', dec=True, minStep=0.01)
@@ -297,14 +299,15 @@ cfg_fourpt.add_parameter("Mode",         'LIN', type='list' , values = sweep_mod
 cfg_fourpt.add_parameter("ModPeriod",     1e-3, type='float', limits=(1e-6,1e0)      , siPrefix=True, suffix='s' , dec=True, minStep=1)
 cfg_fourpt.add_parameter("ModRepeats",     100, type='int'  , limits=(1,1e6)) # Number of modulation periods for a single current step
 cfg_fourpt.add_parameter("ModAmp",     10.0e-6, type='float', limits=(0,cfg_hardware["DC/MaxV"]*cfg_hardware["DC/V2A"]/10)   , siPrefix=True, suffix='A' , step=1e-6)
-cfg_fourpt.add_parameter("ModAtt",           0, type='float', limits=(None,0)         , siPrefix=True, suffix='dB', dec=False)
 cfg_fourpt.add_parameter("PeriodCutoff",   0.0, type='int'  , limits=(0,None)         , siPrefix=True, dec=False)
 
 # Spectrum analyzer calibration parameters
 dd_calib_modes = ['High Damping', 'Background Subtraction']
 cfg_pcalib.add_parameter("DD_Calib/Mode", 'High Damping', type='list' , values = dd_calib_modes)
 cfg_pcalib.add_parameter("DD_Calib/Iterations",        1, type='int'  , limits=(0,None)         , siPrefix=True)
-cfg_pcalib.add_parameter("DD_Calib/DC_Current",     1e-3, type='float', limits=(-cfg_hardware["DC/MaxV"]*cfg_hardware["DC/V2A"],cfg_hardware["DC/MaxV"]*cfg_hardware["DC/V2A"]) , siPrefix=True, suffix='A' , step=0.0001)
+cfg_pcalib.add_parameter("DD_Calib/DC_Current"  ,     1e-3, type='float', limits=(-cfg_hardware["DC/MaxV"]*cfg_hardware["DC/V2A"],cfg_hardware["DC/MaxV"]*cfg_hardware["DC/V2A"]) , siPrefix=True, suffix='A' , step=0.0001)
+cfg_pcalib.add_parameter("DD_Calib/dVdI_Current",     1e-3, type='float', limits=(-cfg_hardware["DC/MaxV"]*cfg_hardware["DC/V2A"],cfg_hardware["DC/MaxV"]*cfg_hardware["DC/V2A"]) , siPrefix=True, suffix='A' , step=0.0001)
+cfg_pcalib.add_parameter("DD_Calib/dVdI_Steps",         11, type='int'  , limits=(1,None)         , siPrefix=True)
 
 # Spectrum analyzer calibration parameters
 cfg_pcalib.add_parameter("SA_Calib/Range",      100e6, type='float', limits=(0,None)         , siPrefix=True, suffix='Hz', dec=False)
@@ -528,7 +531,7 @@ b_quicksweep = t_sweep  .place_object(egg.gui.Button("Quick Sweep"), column = 1,
 # databox plotters for the Ohm tab
 plot_fmr      = t_fmr .place_object(egg.gui.DataboxPlot("*.fmr" , "plotsw_fmr.cfg"), column_span=2)
 plot_fmr.button_autoscript.set_checked(False)
-fmr_script = "x = [ d[0], d[0] ]\ny = [ d[2], d[3] ]\n\nxlabels=\'Frequency (Hz)\'\nylabels=\'deltaR (Ohms)\'"; plot_fmr.script.set_text(fmr_script)
+fmr_script = "x = [ d[0], d[0] ]\ny = [ d[3], d[4] ]\n\nxlabels=\'Frequency (Hz)\'\nylabels=\'deltaR (Ohms)\'"; plot_fmr.script.set_text(fmr_script)
 t_fmr.new_autorow()
 b_send_fmr = t_fmr  .place_object(egg.gui.Button("Send to Plot"), column = 0, alignment = 1)
 b_useasref = t_fmr  .place_object(egg.gui.Button("Use as Reference"), column = 1, alignment = 1)
@@ -600,7 +603,7 @@ l_perf_acqtime   = g_perf.place_object(egg.gui.Label("Acquisition time: --s"), c
 l_perf_dutycyc   = g_perf.place_object(egg.gui.Label("Duty cycle: --%"), column = 1)
 l_perf_breakdown = g_perf.place_object(egg.gui.Label("ai Start: --s | ao Start: --s | ao Wait: --s | ai Read: --s | Analysis: --s"), column = 2, alignment = 2)
 g_perf.place_object(egg.gui.Label("|||||"), column = 3, alignment=2)
-l_rliac_fmr      = g_perf  .place_object(egg.gui.Label("Device resistance = -----Ohm, AC current = -----mA"), column = 4, alignment=2)
+l_rliac_fmr      = g_perf  .place_object(egg.gui.Label("Device resistance = -----Ohm, AC current = -----mA, eta = -----Ohm/mA^2"), column = 4, alignment=2)
 
 
 
@@ -755,14 +758,28 @@ def b_send_iv_clicked(*a):
     plt.figure(6)
     plt.xlabel(r'$I_{dc}$' + ' (A)'); plt.ylabel(r'$dV/dI$' + ' ' + r'$(\Omega)$')
     plt.ticklabel_format(style='sci', axis='x', scilimits=(0,0));
-    plt.plot(plot_iv[0], plot_iv[4])
+    plt.scatter(plot_iv[0], plot_iv[4])
+    # Fit    
+    plt.hold(True)
+    popt, perr = fit_dVdI(plot_iv[0], plot_iv[4])
+    xvals = _n.linspace(1.1*_n.min(plot_iv[0]), 1.1*_n.max(plot_iv[0]), 100)
+    yvals = map(lambda x: popt[0] + popt[1]*x**2, xvals)
+    plt.plot(xvals,yvals)
+    plt.xlim(1.1*_n.min(plot_iv[0]), 1.1*_n.max(plot_iv[0]))
     plt.tight_layout()
     
     # dV/dIn vs I plot
     plt.figure(7)
     plt.xlabel(r'$I_{dc}$' + ' (A)'); plt.ylabel(r'$dV/dI$n' + ' ' + r'$(\Omega)$')
     plt.ticklabel_format(style='sci', axis='x', scilimits=(0,0));
-    plt.plot(plot_iv[0], plot_iv[5])
+    plt.scatter(plot_iv[0], plot_iv[5])
+    # Fit
+    plt.hold(True)
+    popt, perr = fit_dVdI(plot_iv[0], plot_iv[5])
+    xvals = _n.linspace(1.1*_n.min(plot_iv[0]), 1.1*_n.max(plot_iv[0]), 100)
+    yvals = map(lambda x: popt[0] + popt[1]*x**2, xvals)
+    plt.plot(xvals,yvals)
+    plt.xlim(1.1*_n.min(plot_iv[0]), 1.1*_n.max(plot_iv[0]))
     plt.tight_layout()    
     
 b_send_iv.signal_clicked.connect(b_send_iv_clicked)
@@ -786,6 +803,10 @@ def b_calibload_clicked(*a):
         p_calib = plot_calib['P']
         p_factor = plot_calib['P_f']
         p_factor_mixed = plot_calib['P_f_m']
+        
+        global R_L, eta
+        R_L = plot_calib.headers['R_L']
+        eta = plot_calib.headers['eta']
     
 #    elif cfg_sweep['Experiment'] == "Spectrum Analyzer":
 #       global f_calib_sa      
@@ -804,7 +825,7 @@ def b_calibreset_clicked(*a):
     f_calib, p_calib, p_factor = power_calibration()
     p_factor_mixed = [1]*len(p_factor)
     
-    plot_calib.clear()
+    plot_calib.plot()
     reinit_calib_databoxes()
     print "Calibration reset."    
     
@@ -905,7 +926,7 @@ def get_Iac(P_ac = cfg_sweep['Power']):
     I_ac = _n.sqrt(4 * 1e-3*10**(pows[0]/10) * 50) / (R_L + 50)
     
 # Load some initial values
-R_L = 0; I_ac = 1.0
+R_L = 0.0; I_ac = 1.0; eta = 1.0
 
 
 
@@ -1127,7 +1148,7 @@ init_sa_calib_arrays()
 
 def reinit_sweep_databoxes():
     """
-    Reinitializes and the preallocated databoxes for a new acquisition.
+    Reinitializes the sweep databoxes for a new acquisition.
     """    
     ### clear out the old data, reinitialize databoxes
     plot_raw.clear()
@@ -1141,7 +1162,7 @@ def reinit_sweep_databoxes():
         # Reinitialize lock-in databox
         plot_sweep['f']      = []
         plot_sweep['P']      = []
-        plot_sweep['P_corr'] = []
+        plot_sweep['P_f']    = []
         plot_sweep['V_sin']  = []
         plot_sweep['V_cos']  = []   
         plot_sweep['V_sinc'] = []
@@ -1152,11 +1173,33 @@ def reinit_sweep_databoxes():
         plot_sweep['V']      = []
         plot_sweep['V_rms']  = []
         plot_sweep['P_out']  = []
-    
+ 
+
+def reinit_fmr_databoxes():
+    """
+    Reinitializes the preallocated FMR databoxes for a new acquisition.
+    """              
+    if cfg_sweep["Experiment"] == "Driven Dynamics":
+        plot_fmr['f']  = freqs
+        plot_fmr['P']  = pows
+        if cfg_sweep['PowerMode'] == 'Constant':
+            plot_fmr['I_ac'] = plot_calib['I_f'] * 10**(cfg_sweep['Power']/20.0) 
+        else:
+            plot_fmr['I_ac'] = plot_calib['I_f'] * 10**(cfg_sweep['Power']/20.0) / _n.sqrt(p_factor)
+        plot_fmr['dR'] = [0]*cfg_sweep['Steps']
+        plot_fmr['dR_c'] = [0]*cfg_sweep['Steps']   
+        plot_fmr['std_dR'] = [0]*cfg_sweep['Steps']
+        plot_fmr['std_dR_c'] = [0]*cfg_sweep['Steps']
+    elif cfg_sweep["Experiment"] == "Spectrum Analyzer":
+        plot_fmr['f']  = freqs
+        plot_fmr['P_out'] = [0]*cfg_sweep['Steps']
+        plot_fmr['P_in']  = [0]*cfg_sweep['Steps']
+        plot_fmr['std_dR'] = [0]*cfg_sweep['Steps']
+        plot_fmr['std_dR_c'] = [0]*cfg_sweep['Steps']     
 
 def reinit_iv_databoxes():  
     """
-    Reinitializes and the preallocated databoxes for a new acquisition.
+    Reinitializes the IV curve databoxes for a new acquisition.
     """       
     ### clear out the old data, reinitialize databoxes
     plot_fourpt.clear()   
@@ -1174,19 +1217,20 @@ def reinit_iv_databoxes():
     
 def reinit_calib_databoxes():
     """
-    Reinitializes and the preallocated databoxes for a new acquisition.    
+    Reinitializes the preallocated power calibration databoxes for a new acquisition.    
     """
     if cfg_sweep["Experiment"] == "Driven Dynamics":
         # Change plot scripts
         sweep_script = "x = [ d[0], d[0] ]\ny = [ d[5], d[6] ]\n\nxlabels=\'Frequency (Hz)\'\nylabels=\'V\'"
         plot_sweep.script.set_text(sweep_script)
         
-        calib_script = "x = [ d[0], d[0], d[0] ]\ny = [ d[1], d[2], d[3] ]\n\nxlabels=\'Frequency (Hz)\'\nylabels=[\'P_corr (dBm)\', \'P_f\', \'P_fmix\']"
+        calib_script = "x = [ d[0], d[0], d[0] ]\ny = [ d[1], d[3], d[4] ]\n\nxlabels=\'Frequency (Hz)\'\nylabels=[\'P_corr (dBm)\', \'P_fmix\', \'I_f (mA)\']"
         plot_calib.script.set_text(calib_script)
         plot_calib['f']     = freqs
         plot_calib['P']     = [cfg_sweep['Power']]*cfg_sweep['Steps']
         plot_calib['P_f']   = [1]*cfg_sweep['Steps']
-        plot_calib['P_f_m'] = [1]*cfg_sweep['Steps']       
+        plot_calib['P_f_m'] = [1]*cfg_sweep['Steps']     
+        plot_calib['I_f']   = [1]*cfg_sweep['Steps']
         
     if cfg_sweep["Experiment"] == "Spectrum Analyzer":
         # Change plot scripts
@@ -1206,7 +1250,7 @@ def reinit_calib_databoxes():
         
 def reinit_bsweep_databoxes():
     """
-    Reinitializes and the preallocated databoxes for a new acquisition.    
+    Reinitializes the B-field sweep databoxes for a new acquisition.    
     """
     plot_bsweep.set_size_and_bounds(size = [cfg_sweep['Steps'], cfg_bsweep['Steps']], \
         bnds = [cfg_sweep['Start'], cfg_sweep['Stop'], cfg_bsweep['Start'], cfg_bsweep['Stop']])
@@ -1214,7 +1258,7 @@ def reinit_bsweep_databoxes():
         
 def reinit_isweep_databoxes():
     """
-    Reinitializes and the preallocated databoxes for a new acquisition.    
+    Reinitializes the DC current sweep databoxes for a new acquisition.    
     """
     plot_isweep.set_size_and_bounds(size = [cfg_sweep['Steps'], cfg_isweep['Steps']], \
         bnds = [cfg_sweep['Start'], cfg_sweep['Stop'], cfg_isweep['Start'], cfg_isweep['Stop']])
@@ -1240,7 +1284,6 @@ def cfg_sweep_changed(*b):
 cfg_sweep.load()
 
 # connect this function and get some initial settings
-cfg_sweep.connect_signal_changed("Steps", reinit_calib_databoxes)
 cfg_sweep.connect_any_signal_changed(cfg_sweep_changed)
 cfg_sweep_changed()
 
@@ -1355,7 +1398,7 @@ def RL_changed(*a):
     global R_L
     R_L = 0
     l_rliac_fmr.set_text("Device resistance = -----Ohm, AC current = -----mA")
-cfg_sweep.connect_signal_changed('DC_Current', RL_changed)
+#cfg_sweep.connect_signal_changed('DC_Current', RL_changed)
 
 
 def Iac_changed(*a):
@@ -1399,7 +1442,7 @@ def experiment_change(*a):
         sweep_script = "x = [ d[0], d[0] ]\ny = [ d[5], d[6] ]\n\nxlabels=\'Frequency (Hz)\'\nylabels=\'V\'"
         plot_sweep.script.set_text(sweep_script)
         
-        calib_script = "x = [ d[0], d[0], d[0] ]\ny = [ d[1], d[2], d[3] ]\n\nxlabels=\'Frequency (Hz)\'\nylabels=[\'P_corr (dBm)\', \'P_f\', \'P_fmix\']"
+        calib_script = "x = [ d[0], d[0], d[0] ]\ny = [ d[1], d[3], d[4] ]\n\nxlabels=\'Frequency (Hz)\'\nylabels=[\'P_corr (dBm)\', \'P_fmix\', \'I_f\']"
 
         plot_calib.script.set_text(calib_script)
         plot_calib['f']     = freqs
@@ -1407,7 +1450,7 @@ def experiment_change(*a):
         plot_calib['P_f']   = [1]*cfg_sweep['Steps']
         plot_calib['P_f_m'] = [1]*cfg_sweep['Steps']  
                 
-        fmr_script = "x = [ d[0], d[0] ]\ny = [ d[2], d[3] ]\n\nxlabels=\'Frequency (Hz)\'\nylabels=\'deltaR (Ohms)\'"
+        fmr_script = "x = [ d[0], d[0] ]\ny = [ d[3], d[4] ]\n\nxlabels=\'Frequency (Hz)\'\nylabels=\'deltaR (Ohms)\'"
         plot_fmr.script.set_text(fmr_script)
         
         # Turn PULM button on
@@ -1643,7 +1686,17 @@ def sweep_and_plot():
     """      
     # Reinitialize databoxes and add offset mixdown voltage in header
     reinit_sweep_databoxes()   
-   
+ 
+    # Insert headers
+    plot_sweep.insert_header('Experiment', cfg_sweep['Experiment'])
+    plot_sweep.insert_header('SigGen', cfg_hardware['RFSource'])
+    plot_sweep.insert_header('AmpGain', cfg_hardware['Amp/Gain'])
+    plot_sweep.insert_header('I_dc', cfg_sweep['DC_Current']) 
+    plot_sweep.insert_header('PULM_Period', cfg_sweep['PULM/Period'])
+    plot_sweep.insert_header('PULM_Repeats', cfg_sweep['PULM/Repeats'])
+    plot_sweep.insert_header('R_L', R_L)
+    plot_sweep.insert_header('eta', eta)
+  
     # Set up analog output and input tasks (and activate pulse modulation)
     ao = ao_task_pulm()
     ai = ai_task_sweep()
@@ -1754,6 +1807,91 @@ def sweep_and_plot():
     l_perf_breakdown.set_text(breakdown_str)
 
 
+def iv_and_plot():
+    """
+    Performs a four-point measurement on the device.
+    """
+    global ao_fourpt, cos_iv, sin_iv, curs, R_L, eta
+    
+    reinit_iv_databoxes()
+
+    # Insert headers
+    plot_iv.insert_header('Experiment', cfg_sweep['Experiment'])
+    plot_iv.insert_header('SigGen', cfg_hardware['RFSource'])
+    plot_iv.insert_header('AmpGain', cfg_hardware['Amp/Gain'])
+    plot_iv.insert_header('ModPeriod', cfg_fourpt['ModPeriod'])
+    plot_iv.insert_header('ModRepeats', cfg_fourpt['ModRepeats'])
+    plot_iv.insert_header('ModAmp', cfg_fourpt['ModAmp'])
+    
+    # Measure the device resistance
+    R_L, offset = get_RL()
+
+    ### Actual measurement
+    # Forward loop over frequencies
+    for n in range(0,2*cfg_fourpt["Steps"]+1):  
+        if not b_fourpt.is_checked(): break;
+    
+        # Initialize acquisition and analysis arrays
+        ao_fourpt, cos_iv, sin_iv = init_fourpt(curs[n], cfg_fourpt["ModAmp"])
+        
+        if n == 0:
+            current_ramp(0,curs[0])
+        else:
+            current_ramp(curs[n-1],curs[n])
+        time.sleep(1)
+        
+        # Prepare analog output and input tasks
+        ao = ao_task_fourpt()
+        ai = ai_task_fourpt()
+    
+        # Start analog input
+        ai.start()
+        
+        # Start analog output
+        ao.start()
+    
+        # Wait until acquisition ends
+        ao.wait_and_clean()
+        
+        # retrieve the data
+        y = ai.read_and_clean()
+        
+        # Get mean resistance
+        V_iv, dVdI_cos, dVdI_sin, dVdI, dVdI_namp = fourpt_analysis(y, curs[n], offset)
+        
+        # Plot and store
+        plot_fourpt['t'] = list(_n.arange(0, len(ao_fourpt)) / cfg_hardware['AI/Rate'])
+        plot_fourpt['V'] = y[0]
+        plot_fourpt['dVdI'] = y[1]
+        
+        plot_fourpt.plot()
+        plot_iv.append_data_point([curs[n], V_iv, dVdI_cos, dVdI_sin, dVdI, dVdI_namp])
+        plot_iv.plot()
+
+        # Record current in case the acquisition gets stopped		
+        curtemp = curs[n]          
+        
+        # let the user interface update        
+        window.process_events()
+    
+    # Return current to 0
+    current_ramp(curtemp,0)  
+    
+    # Fit resistance distribution to a parabola
+    popt, perr = fit_dVdI(curs, plot_iv[4])
+    eta = popt[1]
+    
+    # Update resistance label
+    l_imp_iv.set_text("Offset Voltage = " + str(_n.round(100000*offset)/100) + "mV | Mean Resistance = " + str(_n.round(100*R_L)/100) + "Ohm, eta = " + "%.2f" % (eta/1e6) + "Ohm/(mA)^2")        
+    
+    # Insert headers
+    plot_iv.insert_header("R_L", R_L)
+    plot_iv.insert_header("eta", eta)
+    
+    # uncheck the fire button
+    b_fourpt.set_checked(False) 
+
+
 def sa_calib_step_and_plot():
     """
     Takes the spectrum for a single frequency step for the two-source calibration
@@ -1839,7 +1977,8 @@ def get_RL(dc_cur = 0.0):
     # Get mean resistance
     V_iv, dVdI_cos, dVdI_sin, dVdI, dVdI_namp = fourpt_analysis(y, 0, offset)
     
-    R_L = (dVdI / (cfg_hardware['DCSourceR'] - dVdI)) * cfg_hardware['DCSourceR']
+    # Calculate resistance (from unamplified channel)
+    R_L = (dVdI_namp / (cfg_hardware['DCSourceR'] - dVdI_namp)) * cfg_hardware['DCSourceR']
     get_Iac()
 
     #print dVdI, R_L, I_ac   
@@ -1862,6 +2001,13 @@ def fire_quicksweep(enabled):
     # don't do anything if we're disabling the acquisition (the loop will
     # finish and end gracefully)
     if not enabled: return
+
+    # Insert headers
+    plot_sweep.insert_header('I_dc', cfg_sweep['DC_Current']) 
+    plot_sweep.insert_header('PULM_Period', cfg_sweep['PULM/Period'])
+    plot_sweep.insert_header('PULM_Repeats', cfg_sweep['PULM/Repeats'])
+    plot_sweep.insert_header('R_L', R_L)
+    plot_sweep.insert_header('eta', eta)
         
     # Initialize acquisition and analysis arrays
     ao_t, ao_sw, ao_dc, cos_li, sin_li, freqs, pows, pows_corr = init_sweep_arrays()
@@ -1930,6 +2076,16 @@ def fmr_and_plot(enabled, init_cur = 0.0, final_cur = 0.0, cur_sweep = False, ge
         time.sleep(3) 
         R_L, V_off = get_RL(init_cur)
               
+    # Insert headers
+    plot_fmr.insert_header('Experiment', cfg_sweep['Experiment'])
+    plot_fmr.insert_header('SigGen', cfg_hardware['RFSource'])
+    plot_fmr.insert_header('AmpGain', cfg_hardware['Amp/Gain'])
+    plot_fmr.insert_header('I_dc', final_cur) 
+    plot_fmr.insert_header('PULM_Period', cfg_sweep['PULM/Period'])
+    plot_fmr.insert_header('PULM_Repeats', cfg_sweep['PULM/Repeats'])
+    plot_fmr.insert_header('R_L', R_L)
+    plot_fmr.insert_header('eta', eta)
+          
     # Do the slow current ramp
     current_ramp(init_cur, final_cur) 
 
@@ -1946,20 +2102,8 @@ def fmr_and_plot(enabled, init_cur = 0.0, final_cur = 0.0, cur_sweep = False, ge
     global fmr_ref
     fmr_ref = [0.0]*cfg_sweep['Steps']
     fmr_stdref = _n.array([0.0]*cfg_sweep['Steps'])
-    
-    if cfg_sweep["Experiment"] == "Driven Dynamics":
-        plot_fmr['f']  = freqs
-        plot_fmr['P']  = pows
-        plot_fmr['dR'] = [0]*cfg_sweep['Steps']
-        plot_fmr['dR_c'] = [0]*cfg_sweep['Steps']   
-        plot_fmr['std_dR'] = [0]*cfg_sweep['Steps']
-        plot_fmr['std_dR_c'] = [0]*cfg_sweep['Steps']
-    elif cfg_sweep["Experiment"] == "Spectrum Analyzer":
-        plot_fmr['f']  = freqs
-        plot_fmr['P_out'] = [0]*cfg_sweep['Steps']
-        plot_fmr['P_in']  = [0]*cfg_sweep['Steps']
-        plot_fmr['std_dR'] = [0]*cfg_sweep['Steps']
-        plot_fmr['std_dR_c'] = [0]*cfg_sweep['Steps']       
+
+    reinit_fmr_databoxes()  
         
     def fmr_plot():
         if cfg_sweep["Experiment"] == "Driven Dynamics": 
@@ -2057,6 +2201,9 @@ def fmr_and_plot(enabled, init_cur = 0.0, final_cur = 0.0, cur_sweep = False, ge
     
     # uncheck the fire button
     b_sweep.set_checked(False)
+    
+    # Insert headers
+    plot_fmr.insert_header('iterations', n_fire_count.get_value())
     
 # connect this function
 def fire_sweep(enabled):
@@ -2176,7 +2323,6 @@ def fire_IV(enabled):
         tabs_plots.set_current_tab(6)
     
     # Reinitialize databoxes
-    reinit_iv_databoxes()
     RL_changed()
     
     while b_fourpt.is_checked():
@@ -2193,33 +2339,35 @@ def fire_IV(enabled):
 window.connect(b_fourpt.signal_clicked, fire_IV)
 
 
-def fire_calib_dd_damp():
+def fire_calib_dd():
     """
-    Routine doing a power calibration by doing a subtraction of the resonant features
-    by taking calibration curves at +x mA and -x mA.
+    Routine doing a power calibration by using the joule heating mixdown term.
     """
     b_calib.set_checked(True)
     n_fire_count.set_value(0)
     
     # Reset the calibration and reinitialize the power calibration databox
     ao_t, ao_sw, ao_dc, cos_li, sin_li, freqs, pows, pows_corr = init_sweep_arrays()
-    b_calibreset_clicked()
-    plot_calib['f']     = freqs
-    plot_calib['P']     = [cfg_sweep['Power']]*cfg_sweep['Steps']
-    plot_calib['P_f']   = [1]*cfg_sweep['Steps']
-    plot_calib['P_f_m'] = [1]*cfg_sweep['Steps']    
+    b_calibreset_clicked()    
     global calib_factors		
     calib_factors = _n.array([[1.0]*cfg_sweep['Steps']] * 3)
+
+    # Insert headers    
+    plot_calib.insert_header('Experiment', cfg_sweep['Experiment'])
+    plot_calib.insert_header('SigGen', cfg_hardware['RFSource'])
+    plot_calib.insert_header('AmpGain', cfg_hardware['Amp/Gain'])
+    plot_calib.insert_header('Mode', cfg_pcalib["DD_Calib/Mode"])
+    plot_calib.insert_header('Power', cfg_sweep["Power"])
+    plot_calib.insert_header('I_DC', cfg_pcalib["DD_Calib/DC_Current"])
+    plot_calib.insert_header('PULM_Period', cfg_sweep["PULM/Period"])
+    plot_calib.insert_header('PULM_Repeats', cfg_sweep["PULM/Repeats"])
+    plot_calib.insert_header('Iterations', cfg_pcalib["DD_Calib/Iterations"])
+    plot_calib.insert_header('dVdI_Current', cfg_pcalib["DD_Calib/dVdI_Current"])
+    plot_calib.insert_header('dVdI_Steps', cfg_pcalib["DD_Calib/dVdI_Steps"])
     
     # Ramp the current back down    
     RL_changed()
-    current_ramp(0,0) 
-
-    # Set the values for the RF and DC currents for the 1st step
-    curtemp = cfg_sweep['DC_Current']
-    powtemp = cfg_sweep['Power']    
-    powmtemp= cfg_sweep['PowerMode']
-    stepstemp=cfg_sweep['Steps']        
+    current_ramp(0,0)    
 
     # Prompt user to move magnet to n*pi/2 radians    
     w_magnet_1 = egg.gui.Window("MAGNET!")
@@ -2242,54 +2390,79 @@ def fire_calib_dd_damp():
     if not b_calib.is_checked(): return
  
     ### START CALIBRATION        
-    
-    for k in range(cfg_pcalib["DD_Calib/Iterations"]):
 
-        # STEP 0 : Get DC offset by doing a sweep at minimum power and no DC current
-        print "Step 0..."
+    # STEP 0 : Get DC offset by doing a sweep at minimum power and no DC current
+    print "0: Get device resistance, heating factor and voltage offset..."
+
+    # Get the resistance and heating factor of the device        
+    # Start by storing temporary values for the IV curve
+    ivstart_temp = cfg_fourpt["Start"]
+    ivstop_temp  = cfg_fourpt["Stop"]
+    ivsteps_temp = cfg_fourpt["Steps"]
     
-        global V_off
-        R_L, offset = get_RL()
-        #print "V_off = " + str(round(V_off,3))  
+    # Replace them by values specific to the calibration
+    cfg_fourpt["Start"] = -cfg_pcalib["DD_Calib/dVdI_Current"]
+    cfg_fourpt["Stop"]  =  cfg_pcalib["DD_Calib/dVdI_Current"]
+    cfg_fourpt["Steps"] =  cfg_pcalib["DD_Calib/dVdI_Steps"]
+    
+    # Get the IV curve, as well as R_L and eta in the process
+    b_fourpt.set_checked(True)
+    tabs_plots.set_current_tab(6)
+    iv_and_plot()
+    b_fourpt.set_checked(False)
+    
+    # Store R_L and eta in header
+    plot_calib.insert_header('R_L', R_L)
+    plot_calib.insert_header('eta', eta)    
+    
+    # Reinitialize fourpt parameters
+    cfg_fourpt["Start"] = ivstart_temp
+    cfg_fourpt["Stop"] = ivstop_temp
+    cfg_fourpt["Steps"] = ivsteps_temp
         
-        cfg_sweep['Power'] = -30 
-        cfg_sweep['Steps'] = 1        
-        
-        # Initialize acquisition and analysis arrays
-        ao_t, ao_sw, ao_dc, cos_li, sin_li, freqs, pows, pows_corr = init_sweep_arrays(dc_cur = 0.0)
-        
-        # Turn on Anapico and set up for manual list mode
-        a.list_man_setup(freqs,pows)
-        time.sleep(1)  
-        sweep_and_plot()
-        global V_off
-        V_off = _n.mean(plot_sweep['V_sin'])   
-        print "V_off = " + str(round(V_off,3))       
-#        
-#        
-        # Reinitialize values for the second step of the power calibration    
-        cfg_sweep['Power'] = powtemp
-        cfg_sweep['PowerMode'] = 'Constant'
-        cfg_sweep['Steps'] = stepstemp
-        cfg_sweep_changed()
-        
-        # Do the slow current ramp
-        current_ramp(0,cfg_pcalib["DD_Calib/DC_Current"]) 
-        time.sleep(3)        
-        
-        # Reset calibration
-        b_calibreset_clicked()
-   
+    # Now get the DC offset voltage
+    global V_off
+
+    # Set the values for the RF and DC currents for the 1st step
+    curtemp = cfg_sweep['DC_Current']
+    powtemp = cfg_sweep['Power']    
+    powmtemp= cfg_sweep['PowerMode']
+    stepstemp=cfg_sweep['Steps']     
+
+    cfg_sweep['Power'] = -30 
+    cfg_sweep['Steps'] = 1        
+
+    # Initialize acquisition and analysis arrays
+    ao_t, ao_sw, ao_dc, cos_li, sin_li, freqs, pows, pows_corr = init_sweep_arrays(dc_cur = 0.0)
+    
+    # Turn on signal generator and get the offset
+    a.list_man_setup(freqs,pows)
+    time.sleep(1)  
+    sweep_and_plot()
+    global V_off
+    V_off = _n.mean(plot_sweep['V_sin'])       
+                
+    # Reinitialize values for the second step of the power calibration    
+    cfg_sweep['Power'] = powtemp
+    cfg_sweep['PowerMode'] = 'Constant'
+    cfg_sweep['Steps'] = stepstemp
+    cfg_sweep_changed()
+    
+    # Iterate over the next steps as specified
+    for k in range(cfg_pcalib["DD_Calib/Iterations"]): 
      
         # STEP 1 : Do a first calibration by working at constant power    
-        print "Step 1..."
-        
+        print "1: Calibrate at constant output power..."
+ 
+        # Do the slow current ramp
+        current_ramp(0,cfg_pcalib["DD_Calib/DC_Current"]) 
+        time.sleep(3)     
+       
         # Break if calibration button is not checked
         if not b_calib.is_checked(): return
         
         # Switch tab
-        if tabs_plots.get_current_tab() != 2: 
-            tabs_plots.set_current_tab(3)
+        if tabs_plots.get_current_tab() != 2: tabs_plots.set_current_tab(3)
         
     
         # Initialize acquisition and analysis arrays
@@ -2303,46 +2476,98 @@ def fire_calib_dd_damp():
         sweep_and_plot() 
         
         # Store as the positive current calibration signal
-        V_calib = plot_sweep['V_sin']        
+        V_calib_pos = plot_sweep['V_sin']        
+        V_calib_neg = 0.0   
+       
         
+        # If we do background subtraction, do the same procedure for the opposite current direction
+        # First define a variable that tells us if we'll be at +ve or -ve current after the full step 1                      
+        invert_cur  = 1    
+        
+        if cfg_pcalib["DD_Calib/Mode"] == "Background Subtraction":  
+            invert_cur = -1            
+            
+            # Do the slow current ramp
+            current_ramp(cfg_pcalib["DD_Calib/DC_Current"], -cfg_pcalib["DD_Calib/DC_Current"]) 
+            time.sleep(3)
+
+            # Break if calibration button is not checked
+            if not b_calib.is_checked(): return      
+
+            # Switch tab
+            if tabs_plots.get_current_tab() != 2: tabs_plots.set_current_tab(3)
+
+            # Initialize acquisition and analysis arrays
+            ao_t, ao_sw, ao_dc, cos_li, sin_li, freqs, pows, pows_corr = init_sweep_arrays(-cfg_pcalib["DD_Calib/DC_Current"])
+            
+            # Set up Anapico for manual list mode with updated frequencies
+            a.list_man_setup(freqs,pows)
+        
+            # acquire and plot data
+            sweep_and_plot()
+            
+            # Store as the negative current calibration signal
+            V_calib_neg = plot_sweep['V_sin']
+       
         # Get the calibration data
         global f_calib, p_calib, p_factor, p_factor_mixed
+        V_calib = (V_calib_pos - V_calib_neg)/2
         f_calib, p_calib, p_factor = power_calibration(freqs,V_calib)
         p_factor_mixed = [1]*len(p_factor)  
         
+        # Get the output current (calculated for an output power of 0dBm)
+        plot_calib['I_f'] = _n.sqrt( 2/(3*eta*cfg_pcalib["DD_Calib/DC_Current"]) * V_calib / cfg_hardware["Amp/Gain"]) * 10**(-cfg_sweep["Power"]/20) 
+        
         # Break if calibration button is not checked
         if not b_calib.is_checked(): return
-    
-        # Stop if we work in constant mode
-        if powmtemp != 'Constant':
-            # Break if calibration button is not checked
-            if not b_calib.is_checked(): return        
+  
+  
+        # Move on to the fine calibration step after adjusting the output powers. 
+        # Stop here if we work in constant output power mode.
+        if powmtemp != 'Constant': 
             
-            # STEP 2 : Same as step 2a, with positive current.
-            print "Step 2..."
-            
+            # STEP 2: Recalibrate to account for non-linearities in the output power.
+            print "2: Recalibrate with adjusted output power levels..."              
+                                  
             # Break if calibration button is not checked
-            if not b_calib.is_checked(): return        
+            if not b_calib.is_checked(): return     
             
             # Set up power mode and initialize acquisition and analysis arrays      
-            if b_calibthird.is_checked(): 
+            cfg_sweep['PowerMode'] = 'Calibrated'
+            ao_t, ao_sw, ao_dc, cos_li, sin_li, freqs, pows, pows_corr = init_sweep_arrays(invert_cur*cfg_pcalib["DD_Calib/DC_Current"])
+            a.list_man_setup(freqs,pows)
+    
+            # Run.             
+            sweep_and_plot()
+            V_calib_pos = plot_sweep['V_sin']
+            V_calib_neg = 0
+
+            # If we do background subtraction, do the same procedure for the opposite current direction
+            if cfg_pcalib["DD_Calib/Mode"] == "Background Subtraction":   
+                    
+                # Break if calibration button is not checked
+                if not b_calib.is_checked(): break
+                       
+                # Do the slow current ramp
+                current_ramp(-cfg_pcalib["DD_Calib/DC_Current"], cfg_pcalib["DD_Calib/DC_Current"]) 
+                time.sleep(3) 
+
+                # Set up power mode and initialize acquisition and analysis arrays      
                 cfg_sweep['PowerMode'] = 'Calibrated'
                 ao_t, ao_sw, ao_dc, cos_li, sin_li, freqs, pows, pows_corr = init_sweep_arrays(cfg_pcalib["DD_Calib/DC_Current"])
                 a.list_man_setup(freqs,pows)
         
                 # Run.             
                 sweep_and_plot()
-                V_calib = plot_sweep['V_sin']
-    #            else:
-    #                V_calib_pos = (N*V_calib_pos + plot_sweep['V_sin'])/(N+1)
-                
-                # Break if calibration button is not checked
-                if not b_calib.is_checked(): break
-                           
-                # Get the resulting power factor
-                f_calib, p_c2, p_factor_mixed = power_calibration(freqs,V_calib)
-        #            p_factor = _n.multiply(p_factor, p_factor_mixed)
-        #            p_calib  = -10*_n.log10(p_factor)       
+                V_calib_neg = plot_sweep['V_sin']                   
+                   
+            # Get the resulting power factor
+            V_calib = invert_cur*(V_calib_pos - V_calib_neg)/2
+            f_calib, p_c2, p_factor_mixed = power_calibration(freqs,V_calib)
+
+            # Recalculate output current (obtained for an output power of 0dBm)
+            #V_c = V_calib[0]*_n.ones(cfg_sweep["Steps"])
+            #plot_calib['I_f'] = _n.sqrt( 2/(3*eta*cfg_pcalib["DD_Calib/DC_Current"]) * V_c / cfg_hardware["Amp/Gain"]) * 10**(-cfg_sweep["Power"]/20.0)         
         
         # update the window
         window.process_events()        
@@ -2381,250 +2606,250 @@ def fire_calib_dd_damp():
     n_fire_count.set_value(0)    
    
 
-def fire_calib_dd_bckg(): 
-    """
-    Routine doing a power calibration by doing a subtraction of the resonant features
-    by taking calibration curves at +x mA and -x mA.
-    """    
-    b_calib.set_checked(True)
-    n_fire_count.set_value(0)
-    
-    # Reset the calibration and reinitialize the power calibration databox
-    ao_t, ao_sw, ao_dc, cos_li, sin_li, freqs, pows, pows_corr = init_sweep_arrays()
-    b_calibreset_clicked()
-    plot_calib['f']     = freqs
-    plot_calib['P']     = [cfg_sweep['Power']]*cfg_sweep['Steps']
-    plot_calib['P_f']   = [1]*cfg_sweep['Steps']
-    plot_calib['P_f_m'] = [1]*cfg_sweep['Steps']    
-    global calib_factors		
-    calib_factors = _n.array([[1.0]*cfg_sweep['Steps']] * 3)
-    
-    # Ramp the current back down    
-    RL_changed()
-    current_ramp(0,0) 
-
-    # Set the values for the RF and DC currents for the 1st step
-    curtemp = cfg_sweep['DC_Current']
-    powtemp = cfg_sweep['Power']    
-    powmtemp= cfg_sweep['PowerMode']
-    stepstemp=cfg_sweep['Steps']        
-
-    # Prompt user to move magnet to n*pi/2 radians    
-    w_magnet_1 = egg.gui.Window("MAGNET!")
-    w_magnet_1.place_object(egg.gui.GridLayout(False))
-    w_magnet_1.place_object(egg.gui.Label("Please move the magnet to the measurement position."))
-    w_magnet_1.new_autorow()
-    b_magnet_1 = w_magnet_1.place_object(egg.gui.Button("OKAY."))
-    b_magnet_1.set_checkable(True); b_magnet_1.set_checked(False)
-    w_magnet_1.show()
-    try:
-        while not b_magnet_1.is_checked():   
-            time.sleep(0.1); 
-            w_magnet_1.process_events()
-        w_magnet_1.close()
-    except RuntimeError:
-        b_calib.set_checked(False)
-        print "Calibration aborted."
-    
-    # Break if calibration button is not checked
-    if not b_calib.is_checked(): return
- 
-    ### START CALIBRATION        
-    
-    for k in range(cfg_pcalib["DD_Calib/Iterations"]):
-
-        # STEP 0 : Get DC offset by doing a sweep at minimum power and no DC current
-        print "Step 0..."
-    
-        global V_off
-        R_L, offset = get_RL()
-        #print "V_off = " + str(round(V_off,3))  
-        
-        cfg_sweep['Power'] = -30 
-        cfg_sweep['Steps'] = 1        
-        
-        # Initialize acquisition and analysis arrays
-        ao_t, ao_sw, ao_dc, cos_li, sin_li, freqs, pows, pows_corr = init_sweep_arrays(dc_cur = 0.0)
-        
-        # Turn on Anapico and set up for manual list mode
-        a.list_man_setup(freqs,pows)
-        time.sleep(1)  
-        sweep_and_plot()
-        global V_off
-        V_off = _n.mean(plot_sweep['V_sin'])   
-        print "V_off = " + str(round(V_off,3))       
+#def fire_calib_dd_bckg(): 
+#    """
+#    Routine doing a power calibration by doing a subtraction of the resonant features
+#    by taking calibration curves at +x mA and -x mA.
+#    """    
+#    b_calib.set_checked(True)
+#    n_fire_count.set_value(0)
+#    
+#    # Reset the calibration and reinitialize the power calibration databox
+#    ao_t, ao_sw, ao_dc, cos_li, sin_li, freqs, pows, pows_corr = init_sweep_arrays()
+#    b_calibreset_clicked()
+#    plot_calib['f']     = freqs
+#    plot_calib['P']     = [cfg_sweep['Power']]*cfg_sweep['Steps']
+#    plot_calib['P_f']   = [1]*cfg_sweep['Steps']
+#    plot_calib['P_f_m'] = [1]*cfg_sweep['Steps']    
+#    global calib_factors		
+#    calib_factors = _n.array([[1.0]*cfg_sweep['Steps']] * 3)
+#    
+#    # Ramp the current back down    
+#    RL_changed()
+#    current_ramp(0,0) 
+#
+#    # Set the values for the RF and DC currents for the 1st step
+#    curtemp = cfg_sweep['DC_Current']
+#    powtemp = cfg_sweep['Power']    
+#    powmtemp= cfg_sweep['PowerMode']
+#    stepstemp=cfg_sweep['Steps']        
+#
+#    # Prompt user to move magnet to n*pi/2 radians    
+#    w_magnet_1 = egg.gui.Window("MAGNET!")
+#    w_magnet_1.place_object(egg.gui.GridLayout(False))
+#    w_magnet_1.place_object(egg.gui.Label("Please move the magnet to the measurement position."))
+#    w_magnet_1.new_autorow()
+#    b_magnet_1 = w_magnet_1.place_object(egg.gui.Button("OKAY."))
+#    b_magnet_1.set_checkable(True); b_magnet_1.set_checked(False)
+#    w_magnet_1.show()
+#    try:
+#        while not b_magnet_1.is_checked():   
+#            time.sleep(0.1); 
+#            w_magnet_1.process_events()
+#        w_magnet_1.close()
+#    except RuntimeError:
+#        b_calib.set_checked(False)
+#        print "Calibration aborted."
+#    
+#    # Break if calibration button is not checked
+#    if not b_calib.is_checked(): return
+# 
+#    ### START CALIBRATION        
+#    
+#    for k in range(cfg_pcalib["DD_Calib/Iterations"]):
+#
+#        # STEP 0 : Get DC offset by doing a sweep at minimum power and no DC current
+#        print "Step 0..."
+#    
+#        global V_off
+#        R_L, offset = get_RL()
+#        #print "V_off = " + str(round(V_off,3))  
 #        
+#        cfg_sweep['Power'] = -30 
+#        cfg_sweep['Steps'] = 1        
 #        
-        # Reinitialize values for the second step of the power calibration    
-        cfg_sweep['Power'] = powtemp
-        cfg_sweep['PowerMode'] = 'Constant'
-        cfg_sweep['Steps'] = stepstemp
-        cfg_sweep_changed()
-        
-        # Do the slow current ramp
-        current_ramp(0,cfg_pcalib["DD_Calib/DC_Current"]) 
-        time.sleep(3)        
-        
-        # Reset calibration
-        b_calibreset_clicked()
-        
-        # STEP 1a : Do a first calibration by working at constant power    
-        print "Step 1a..."
-        
-        # Break if calibration button is not checked
-        if not b_calib.is_checked(): return
-        
-        # Switch tab
-        if tabs_plots.get_current_tab() != 2: 
-            tabs_plots.set_current_tab(3)
-        
-    
-        # Initialize acquisition and analysis arrays
-        ao_t, ao_sw, ao_dc, cos_li, sin_li, freqs, pows, pows_corr = init_sweep_arrays(dc_cur = cfg_pcalib["DD_Calib/DC_Current"])
-        
-        # Set up Anapico for manual list mode with updated frequencies
-        a.list_man_setup(freqs,pows)
-        time.sleep(1)
-        
-        # acquire and plot data
-        sweep_and_plot()
-        
-        # Store as the positive current calibration signal
-        V_calib_pos = plot_sweep['V_sin']
-    
-    #        # Get the calibration data
-    #        global f_calib, p_calib, p_factor, p_factor_mixed
-    #        f_calib, p_calib, p_factor = power_calibration(freqs,plot_sweep['V_sin'])
-    #        p_factor_mixed = [1]*len(p_factor)
-
-     
-        # Do the slow current ramp
-        current_ramp(cfg_pcalib["DD_Calib/DC_Current"], -cfg_pcalib["DD_Calib/DC_Current"]) 
-        time.sleep(3)
-    
-        # STEP 1b : Same as step 1a, with negative DC current
-        print "Step 1b..."
-
-        # Break if calibration button is not checked
-        if not b_calib.is_checked(): return        
-        
-        # Switch tab
-        if tabs_plots.get_current_tab() != 2: 
-            tabs_plots.set_current_tab(3)
-        
-    
-        # Initialize acquisition and analysis arrays
-        ao_t, ao_sw, ao_dc, cos_li, sin_li, freqs, pows, pows_corr = init_sweep_arrays(-cfg_pcalib["DD_Calib/DC_Current"])
-        
-        # Set up Anapico for manual list mode with updated frequencies
-        a.list_man_setup(freqs,pows)
-    
-        # acquire and plot data
-        sweep_and_plot()
-        
-        # Store as the negative current calibration signal
-        V_calib_neg = plot_sweep['V_sin']
-    
-        # Get the calibration data
-        global f_calib, p_calib, p_factor, p_factor_mixed
-        V_calib = (V_calib_pos - V_calib_neg)/2
-        f_calib, p_calib, p_factor = power_calibration(freqs,V_calib)
-        p_factor_mixed = [1]*len(p_factor)  
-        
-        # Break if calibration button is not checked
-        if not b_calib.is_checked(): return
-    
-        # Stop if we work in constant mode
-        if powmtemp != 'Constant':
-            
-            # STEP 2a : Same thing with corrected powers (for pre-calibrated / mixed modes) to flatten out generator nonlinearities
-            print "Step 2a..."
-            
-            # Break if calibration button is not checked
-            if not b_calib.is_checked(): return        
-            
-            # Set up power mode and initialize acquisition and analysis arrays      
-            if b_calibthird.is_checked(): 
-                cfg_sweep['PowerMode'] = 'Calibrated'
-                ao_t, ao_sw, ao_dc, cos_li, sin_li, freqs, pows, pows_corr = init_sweep_arrays(-cfg_pcalib["DD_Calib/DC_Current"])
-                a.list_man_setup(freqs,pows)
-        
-                # Run.    
-                sweep_and_plot()
-                V_calib_neg = plot_sweep['V_sin']
-    #                else:
-    #                    V_calib_neg = (N*V_calib_neg + plot_sweep['V_sin'])/(N+1)
-            
-            # Break if calibration button is not checked
-            if not b_calib.is_checked(): return
-        
-            
-            # STEP 2b : Same as step 2a, with positive current.
-            print "Step 2b..."
-            
-            # Break if calibration button is not checked
-            if not b_calib.is_checked(): return        
-            
-            # Do the slow current ramp
-            current_ramp(-cfg_pcalib["DD_Calib/DC_Current"], cfg_pcalib["DD_Calib/DC_Current"]) 
-            time.sleep(3)        
-            
-            # Set up power mode and initialize acquisition and analysis arrays      
-            if b_calibthird.is_checked(): 
-                cfg_sweep['PowerMode'] = 'Calibrated'
-                ao_t, ao_sw, ao_dc, cos_li, sin_li, freqs, pows, pows_corr = init_sweep_arrays(cfg_pcalib["DD_Calib/DC_Current"])
-                a.list_man_setup(freqs,pows)
-        
-                # Run.             
-                sweep_and_plot()
-                V_calib_pos = plot_sweep['V_sin']
-    #            else:
-    #                V_calib_pos = (N*V_calib_pos + plot_sweep['V_sin'])/(N+1)
-                
-                # Break if calibration button is not checked
-                if not b_calib.is_checked(): break
-                           
-                # Get the resulting power factor
-                V_calib = (V_calib_pos - V_calib_neg)/2
-                f_calib, p_c2, p_factor_mixed = power_calibration(freqs,V_calib)
-        #            p_factor = _n.multiply(p_factor, p_factor_mixed)
-        #            p_calib  = -10*_n.log10(p_factor)       
-        
-        # update the window
-        window.process_events()        
-        
-        # POWER CALIBRATION FINISHED. 
-        
-        # don't do anything if we're disabling the acquisition (the loop will
-        # finish and end gracefully)
-        if not b_calib.is_checked(): return
-            
-        # Plot the results.
-        tabs_plots.set_current_tab(1)
-        calib_dd_plot()
-    
-        # update the window and increment counter
-        window.process_events()            
-        n_fire_count.increment(1)        
-        
-        # Ramp the current back down    
-        current_ramp(cfg_pcalib["DD_Calib/DC_Current"],0) 
-
-    # Reset RF and DC currents values
-    cfg_sweep['DC_Current'] = curtemp
-    cfg_sweep['Power'] = powtemp
-    cfg_sweep['PowerMode'] = powmtemp
-    
-    
-    # FULL CALIBRATION FINISHED.    
-    # uncheck the fire button
-    b_calib.set_checked(False)
-
-    # Turn Anapico output off    
-    a.quit_list_mode()
-    
-    # Reset the counters
-    n_fire_count.set_value(0)    
+#        # Initialize acquisition and analysis arrays
+#        ao_t, ao_sw, ao_dc, cos_li, sin_li, freqs, pows, pows_corr = init_sweep_arrays(dc_cur = 0.0)
+#        
+#        # Turn on Anapico and set up for manual list mode
+#        a.list_man_setup(freqs,pows)
+#        time.sleep(1)  
+#        sweep_and_plot()
+#        global V_off
+#        V_off = _n.mean(plot_sweep['V_sin'])   
+#        print "V_off = " + str(round(V_off,3))       
+##        
+##        
+#        # Reinitialize values for the second step of the power calibration    
+#        cfg_sweep['Power'] = powtemp
+#        cfg_sweep['PowerMode'] = 'Constant'
+#        cfg_sweep['Steps'] = stepstemp
+#        cfg_sweep_changed()
+#        
+#        # Do the slow current ramp
+#        current_ramp(0,cfg_pcalib["DD_Calib/DC_Current"]) 
+#        time.sleep(3)        
+#        
+#        # Reset calibration
+#        b_calibreset_clicked()
+#        
+#        # STEP 1a : Do a first calibration by working at constant power    
+#        print "Step 1a..."
+#        
+#        # Break if calibration button is not checked
+#        if not b_calib.is_checked(): return
+#        
+#        # Switch tab
+#        if tabs_plots.get_current_tab() != 2: 
+#            tabs_plots.set_current_tab(3)
+#        
+#    
+#        # Initialize acquisition and analysis arrays
+#        ao_t, ao_sw, ao_dc, cos_li, sin_li, freqs, pows, pows_corr = init_sweep_arrays(dc_cur = cfg_pcalib["DD_Calib/DC_Current"])
+#        
+#        # Set up Anapico for manual list mode with updated frequencies
+#        a.list_man_setup(freqs,pows)
+#        time.sleep(1)
+#        
+#        # acquire and plot data
+#        sweep_and_plot()
+#        
+#        # Store as the positive current calibration signal
+#        V_calib_pos = plot_sweep['V_sin']
+#    
+#    #        # Get the calibration data
+#    #        global f_calib, p_calib, p_factor, p_factor_mixed
+#    #        f_calib, p_calib, p_factor = power_calibration(freqs,plot_sweep['V_sin'])
+#    #        p_factor_mixed = [1]*len(p_factor)
+#
+#     
+#        # Do the slow current ramp
+#        current_ramp(cfg_pcalib["DD_Calib/DC_Current"], -cfg_pcalib["DD_Calib/DC_Current"]) 
+#        time.sleep(3)
+#    
+#        # STEP 1b : Same as step 1a, with negative DC current
+#        print "Step 1b..."
+#
+#        # Break if calibration button is not checked
+#        if not b_calib.is_checked(): return        
+#        
+#        # Switch tab
+#        if tabs_plots.get_current_tab() != 2: 
+#            tabs_plots.set_current_tab(3)
+#        
+#    
+#        # Initialize acquisition and analysis arrays
+#        ao_t, ao_sw, ao_dc, cos_li, sin_li, freqs, pows, pows_corr = init_sweep_arrays(-cfg_pcalib["DD_Calib/DC_Current"])
+#        
+#        # Set up Anapico for manual list mode with updated frequencies
+#        a.list_man_setup(freqs,pows)
+#    
+#        # acquire and plot data
+#        sweep_and_plot()
+#        
+#        # Store as the negative current calibration signal
+#        V_calib_neg = plot_sweep['V_sin']
+#    
+#        # Get the calibration data
+#        global f_calib, p_calib, p_factor, p_factor_mixed
+#        V_calib = (V_calib_pos - V_calib_neg)/2
+#        f_calib, p_calib, p_factor = power_calibration(freqs,V_calib)
+#        p_factor_mixed = [1]*len(p_factor)  
+#        
+#        # Break if calibration button is not checked
+#        if not b_calib.is_checked(): return
+#    
+#        # Stop if we work in constant mode
+#        if powmtemp != 'Constant':
+#            
+#            # STEP 2a : Same thing with corrected powers (for pre-calibrated / mixed modes) to flatten out generator nonlinearities
+#            print "Step 2a..."
+#            
+#            # Break if calibration button is not checked
+#            if not b_calib.is_checked(): return        
+#            
+#            # Set up power mode and initialize acquisition and analysis arrays      
+#            if b_calibthird.is_checked(): 
+#                cfg_sweep['PowerMode'] = 'Calibrated'
+#                ao_t, ao_sw, ao_dc, cos_li, sin_li, freqs, pows, pows_corr = init_sweep_arrays(-cfg_pcalib["DD_Calib/DC_Current"])
+#                a.list_man_setup(freqs,pows)
+#        
+#                # Run.    
+#                sweep_and_plot()
+#                V_calib_neg = plot_sweep['V_sin']
+#    #                else:
+#    #                    V_calib_neg = (N*V_calib_neg + plot_sweep['V_sin'])/(N+1)
+#            
+#            # Break if calibration button is not checked
+#            if not b_calib.is_checked(): return
+#        
+#            
+#            # STEP 2b : Same as step 2a, with positive current.
+#            print "Step 2b..."
+#            
+#            # Break if calibration button is not checked
+#            if not b_calib.is_checked(): return        
+#            
+#            # Do the slow current ramp
+#            current_ramp(-cfg_pcalib["DD_Calib/DC_Current"], cfg_pcalib["DD_Calib/DC_Current"]) 
+#            time.sleep(3)        
+#            
+#            # Set up power mode and initialize acquisition and analysis arrays      
+#            if b_calibthird.is_checked(): 
+#                cfg_sweep['PowerMode'] = 'Calibrated'
+#                ao_t, ao_sw, ao_dc, cos_li, sin_li, freqs, pows, pows_corr = init_sweep_arrays(cfg_pcalib["DD_Calib/DC_Current"])
+#                a.list_man_setup(freqs,pows)
+#        
+#                # Run.             
+#                sweep_and_plot()
+#                V_calib_pos = plot_sweep['V_sin']
+#    #            else:
+#    #                V_calib_pos = (N*V_calib_pos + plot_sweep['V_sin'])/(N+1)
+#                
+#                # Break if calibration button is not checked
+#                if not b_calib.is_checked(): break
+#                           
+#                # Get the resulting power factor
+#                V_calib = (V_calib_pos - V_calib_neg)/2
+#                f_calib, p_c2, p_factor_mixed = power_calibration(freqs,V_calib)
+#        #            p_factor = _n.multiply(p_factor, p_factor_mixed)
+#        #            p_calib  = -10*_n.log10(p_factor)       
+#        
+#        # update the window
+#        window.process_events()        
+#        
+#        # POWER CALIBRATION FINISHED. 
+#        
+#        # don't do anything if we're disabling the acquisition (the loop will
+#        # finish and end gracefully)
+#        if not b_calib.is_checked(): return
+#            
+#        # Plot the results.
+#        tabs_plots.set_current_tab(1)
+#        calib_dd_plot()
+#    
+#        # update the window and increment counter
+#        window.process_events()            
+#        n_fire_count.increment(1)        
+#        
+#        # Ramp the current back down    
+#        current_ramp(cfg_pcalib["DD_Calib/DC_Current"],0) 
+#
+#    # Reset RF and DC currents values
+#    cfg_sweep['DC_Current'] = curtemp
+#    cfg_sweep['Power'] = powtemp
+#    cfg_sweep['PowerMode'] = powmtemp
+#    
+#    
+#    # FULL CALIBRATION FINISHED.    
+#    # uncheck the fire button
+#    b_calib.set_checked(False)
+#
+#    # Turn Anapico output off    
+#    a.quit_list_mode()
+#    
+#    # Reset the counters
+#    n_fire_count.set_value(0)    
 
 
 def fire_calib_sa():
@@ -2737,10 +2962,11 @@ def fire_calib_sa():
 
 def fire_calib():
     if cfg_sweep["Experiment"] == "Driven Dynamics":
-        if cfg_pcalib["DD_Calib/Mode"] == "High Damping":
-            fire_calib_dd_damp()
-        elif cfg_pcalib["DD_Calib/Mode"] == "Background Subtraction":
-            fire_calib_dd_bckg()
+        fire_calib_dd()
+#        if cfg_pcalib["DD_Calib/Mode"] == "High Damping":
+#            fire_calib_dd_damp()
+#        elif cfg_pcalib["DD_Calib/Mode"] == "Background Subtraction":
+#            fire_calib_dd_bckg()
     elif cfg_sweep["Experiment"] == "Spectrum Analyzer":
         fire_calib_sa()
     
@@ -2749,76 +2975,7 @@ window.connect(b_calib.signal_clicked, fire_calib)
 
 ##########################
 ### DATA PLOTTING ROUTINES
-##########################
-
-def iv_and_plot():
-    """
-    Performs a four-point measurement on the device.
-    """
-    global ao_fourpt, cos_iv, sin_iv, curs, R_L
-    
-    R_L = 0    
-    
-    # Measure the device resistance
-    R_L, offset = get_RL()
-
-    ### Actual measurement
-    # Forward loop over frequencies
-    for n in range(0,2*cfg_fourpt["Steps"]+1):  
-        if not b_fourpt.is_checked(): break;
-    
-        # Initialize acquisition and analysis arrays
-        ao_fourpt, cos_iv, sin_iv = init_fourpt(curs[n], cfg_fourpt["ModAmp"])
-        
-        if n == 0:
-            current_ramp(0,curs[0])
-        else:
-            current_ramp(curs[n-1],curs[n])
-        time.sleep(1)
-        
-        # Prepare analog output and input tasks
-        ao = ao_task_fourpt()
-        ai = ai_task_fourpt()
-    
-        # Start analog input
-        ai.start()
-        
-        # Start analog output
-        ao.start()
-    
-        # Wait until acquisition ends
-        ao.wait_and_clean()
-        
-        # retrieve the data
-        y = ai.read_and_clean()
-        
-        # Get mean resistance
-        V_iv, dVdI_cos, dVdI_sin, dVdI, dVdI_namp = fourpt_analysis(y, curs[n], offset)
-        
-        # Plot and store
-        plot_fourpt['t'] = list(_n.arange(0, len(ao_fourpt)) / cfg_hardware['AI/Rate'])
-        plot_fourpt['V'] = y[0]
-        plot_fourpt['dVdI'] = y[1]
-        
-        plot_fourpt.plot()
-        plot_iv.append_data_point([curs[n], V_iv, dVdI_cos, dVdI_sin, dVdI, dVdI_namp])
-        plot_iv.plot()
-
-        # Record current in case the acquisition gets stopped		
-        curtemp = curs[n]          
-        
-        # let the user interface update        
-        window.process_events()
-    
-    # Return current to 0
-    current_ramp(curtemp,0)  
-    
-    # Update resistance label
-    l_imp_iv.set_text("Offset Voltage = " + str(_n.round(100000*offset)/100) + "mV | Mean Resistance = " + str(_n.round(100*R_L)/100) + "Ohm")        
-    
-    # uncheck the fire button
-    b_fourpt.set_checked(False) 
-    
+##########################   
 
 def fmr_dd_plot():
     """
@@ -2835,8 +2992,8 @@ def fmr_dd_plot():
     
     # Do the averaging
     N = n_fire_count.get_value()
-    d_fmr[2] = ( N*d_fmr[2] + fmr_sw ) / (N+1)
-    d_fmr[3] = d_fmr[2] - fmr_ref
+    d_fmr['dR'] = ( N*d_fmr['dR'] + fmr_sw ) / (N+1)
+    d_fmr['dR_c'] = d_fmr['dR_c'] - fmr_ref
     
     # Store sweep in the databox (without offset correction) and plot
     global fmr_all    
@@ -2858,7 +3015,7 @@ def fmr_sa_plot():
     """
     # Get the sweep and FMR databoxes
     d_sw  = plot_sweep
-    d_ca  = plot_calib
+    #d_ca  = plot_calib
     d_fmr = plot_fmr
     
     # Substract baseline level
@@ -2934,21 +3091,22 @@ def calib_sa_plot():
     """
     Plots the reference spectrum (with averaging) for the spectrum analyzer experiment
     """
+    global plot_sweep, plot_calib
     # Get the sweep and FMR databoxes
     d_sw = plot_sweep
-    d_c  = plot_calib    
+    d_ca = plot_calib    
     
     # Do the averaging
     N = n_fire_count.get_value()
     if N == 0:
-        d_c['V'] = d_sw['V']
-        d_c['V_rms'] = d_sw['V_rms']
+        d_ca['V'] = d_sw['V']
+        d_ca['V_rms'] = d_sw['V_rms']
     else:
-        d_c['V'] = (N*d_c['V'] + d_sw['V'])/(N+1)
-        d_c['V_rms'] = (N*d_c['V_rms'] + d_sw['V_rms'])/(N+1)
+        d_ca['V'] = (N*d_ca['V'] + d_sw['V'])/(N+1)
+        d_ca['V_rms'] = (N*d_ca['V_rms'] + d_sw['V_rms'])/(N+1)
     
     # Store the databox and plot
-    plot_calib = d_c
+    plot_calib = d_ca
     plot_calib.plot()    
 
     # let the user interface update        
@@ -3003,10 +3161,10 @@ def fourpt_analysis(y, cur, offset=0):
     num_periods = (cfg_fourpt["ModRepeats"] - cfg_fourpt["PeriodCutoff"])
     dVdI_namp_cos = _n.sum(_n.multiply(V_dc,cos_iv_trunc)) / integration_index / (cfg_fourpt["ModAmp"]/2) / num_periods
     dVdI_namp_sin = _n.sum(_n.multiply(V_dc,sin_iv_trunc)) / integration_index / (cfg_fourpt["ModAmp"]/2) / num_periods
-    dVdI_cos  = _n.sum(_n.multiply(V_ac,cos_iv_trunc)) / integration_index / (cfg_fourpt["ModAmp"]/2) / num_periods / cfg_hardware["Amp/Gain"]
-    dVdI_sin  = _n.sum(_n.multiply(V_ac,sin_iv_trunc)) / integration_index / (cfg_fourpt["ModAmp"]/2) / num_periods / cfg_hardware["Amp/Gain"]
-    dVdI_namp = _n.sqrt(dVdI_namp_cos**2 + dVdI_namp_sin**2) * 10**(-cfg_fourpt["ModAtt"]/10)
-    dVdI  = _n.sqrt(dVdI_cos**2 + dVdI_sin**2) * 10**(-cfg_fourpt["ModAtt"]/10)
+    dVdI_cos  = _n.sum(_n.multiply(V_ac,cos_iv_trunc))     / integration_index / (cfg_fourpt["ModAmp"]/2) / num_periods / cfg_hardware["Amp/Gain"]  * 10**(-cfg_hardware["Amp/Attenuation"]/10)
+    dVdI_sin  = _n.sum(_n.multiply(V_ac,sin_iv_trunc))     / integration_index / (cfg_fourpt["ModAmp"]/2) / num_periods / cfg_hardware["Amp/Gain"]  * 10**(-cfg_hardware["Amp/Attenuation"]/10)
+    dVdI_namp = _n.sqrt(dVdI_namp_cos**2 + dVdI_namp_sin**2)
+    dVdI  = _n.sqrt(dVdI_cos**2 + dVdI_sin**2)
     
     return V, dVdI_cos, dVdI_sin, dVdI, dVdI_namp
  
@@ -3030,6 +3188,26 @@ def sa_calib_integration(y, f_lo, pad = 0.2):
     return p_integrated, power_baseline
 
 
+def fit_dVdI(I, dVdI):
+    """
+    Fits dV/dI curves to a parabola, getting the base resistance and the heating factor eta
+    (R = R_0 + eta I_dc^2)
+    """
+    
+    # Define function... convert I_dc to mA so that scipy does not hate you
+    def fit_func(I_dc, R_0, eta):
+        return R_0 + eta*(I_dc*1e3)**2
+        
+    # Get fit and errors    
+    popt, pcov = spop.curve_fit(fit_func, I, dVdI, p0 = [dVdI[0], 1.0])
+    perr = _n.sqrt(_n.diag(pcov))
+    
+    # Rescale eta to Ohms/A^2
+    popt[1] = popt[1] * 1e6
+    perr[1] = perr[1] * 1e6
+
+    return popt, perr
+    
 
 ### SHUTDOWN PROCEDURE
 def shutdown():  

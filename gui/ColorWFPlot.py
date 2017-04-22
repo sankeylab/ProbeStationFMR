@@ -9,9 +9,10 @@ import _dialogs
 import spinmob as _spinmob
 _d = _spinmob.data
 _g = _spinmob.egg._gui
+import PyQt4.QtGui as _qt
 
 # import pyqtgraph and create the App.
-import pyqtgraph as _pg
+import pyqtgraph.widgets.MatplotlibWidget as _mplw
 #_a = _g.mkQApp()
 
 class ColorWFPlot(_g.GridLayout):
@@ -45,7 +46,7 @@ class ColorWFPlot(_g.GridLayout):
         
         # Configure the color plot
         self.colortab = self.tabs.add_tab("Color Plot")
-        self.colorfig = _pg.widgets.MatplotlibWidget.MatplotlibWidget()
+        self.colorfig = _mplw.MatplotlibWidget()
         self.colorax  = self.colorfig.getFigure().add_subplot(111)
         
         # Initialize color plot
@@ -60,7 +61,7 @@ class ColorWFPlot(_g.GridLayout):
         
         # Configure the waterfall plot
         self.wftab = self.tabs.add_tab("Waterfall Plot")
-        self.wffig  = _pg.widgets.MatplotlibWidget.MatplotlibWidget()
+        self.wffig  = _mplw.MatplotlibWidget()
         self.wfax = self.wffig.getFigure().add_subplot(111)
         self.wfax.autoscale_view(True,True,True)
         self.wfplots = [] # Object containing plots corresponding to each data point        
@@ -117,7 +118,7 @@ class ColorWFPlot(_g.GridLayout):
 
         # save the file
         if path == "ask": 
-            path = _dialogs.save()
+            path = str(_qt.QFileDialog.getSaveFileName(None,'Select where to save the databoxes'))
             
         for k in range(len(self.dbs)):
             print (path, self.dbs_combobox.get_text(k))
@@ -278,8 +279,12 @@ class ColorWFPlot(_g.GridLayout):
         if db == None: db = self.dbs_combobox.get_current_index()
             
         # Fetch the data
-        data = self.dbs[db].get_all_data()
-        datarows = data.size/self.array_size[0]
+        try:
+            data = _n.array(self.dbs[db][0::]).transpose()
+            datarows = data.size/self.array_size[0]
+        except:
+            data = []
+            datarows = 0
 
         return data, datarows
         
@@ -293,7 +298,7 @@ class ColorWFPlot(_g.GridLayout):
         
         # pad with zeros for the image plot and update colorbar
         imgplotpad = _n.zeros( (self.array_size[1] - datarows, self.array_size[0]) )
-        if len(data) != 0:
+        if data != []:
 #            self.colorplot.remove()
             self.colorplot = self.colorax.imshow(_n.flipud(_n.vstack((data,imgplotpad))), aspect='auto', extent = self.data_bounds, \
                 interpolation = 'none', cmap = 'bwr')
@@ -312,6 +317,8 @@ class ColorWFPlot(_g.GridLayout):
         # fetch data in current databox
         data, datarows = self.fetch_data()
         data = _n.array(data)
+        print data
+        print datarows
 
         # Remove previous plots
         for k in range(len(self.wfplots)):
