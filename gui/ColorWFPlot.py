@@ -147,7 +147,7 @@ class ColorWFPlot(_g.GridLayout):
         cbox_len = len(self.dbs_combobox.get_all_items())  
  
         # Prompt the user to fetch the databoxes       
-        paths = _dialogs.open_multiple(text = 'Select databoxes to import')
+        paths = _qt.QFileDialog.getOpenFileNames(None, 'Select databoxes to import')
         
         # Figure out the data size and the bounds from a single dummy databox   
         d = _d.databox()
@@ -317,8 +317,6 @@ class ColorWFPlot(_g.GridLayout):
         # fetch data in current databox
         data, datarows = self.fetch_data()
         data = _n.array(data)
-        print data
-        print datarows
 
         # Remove previous plots
         for k in range(len(self.wfplots)):
@@ -331,31 +329,17 @@ class ColorWFPlot(_g.GridLayout):
 
         # Redraw waterfall plot
         wf_buffer = 0     # Adjusts the relative spacing between the plots
-        if datarows == 1: 
+        for k in range(0, datarows):
             # Fetch all (valid) values of the dataset for plotting
-            xvals = self.xvals[_n.isfinite(data)]        
-            yvals = data[_n.isfinite(data)]
+            xvals = self.xvals[_n.isfinite(data[k,:])]                      
+            yvals = data[k,_n.isfinite(data[k,:])]
             try:
                 ymin, ymax = _n.min(yvals), _n.max(yvals)
             except ValueError:
                 ymin, ymax = 0, 0
             
-            # Plot and adjust buffer            
-            self.wfplots.append(self.wfax.plot(xvals, yvals)[0])
-            wf_buffer += ymax
-            
-        elif datarows > 1:
-            for k in range(0, datarows):
-                # Fetch all (valid) values of the dataset for plotting
-                xvals = self.xvals[_n.isfinite(data[k,:])]                      
-                yvals = data[k,_n.isfinite(data[k,:])]
-                try:
-                    ymin, ymax = _n.min(yvals), _n.max(yvals)
-                except ValueError:
-                    ymin, ymax = 0, 0
-                
-                self.wfplots.append(self.wfax.plot(xvals, yvals + hasbuffer*(-ymin + wf_buffer) )[0])
-                wf_buffer += (ymax - ymin)*float(self.wfspinner.get_value())
+            self.wfplots.append(self.wfax.plot(xvals, yvals + hasbuffer*(-ymin + wf_buffer) )[0])
+            wf_buffer += (ymax - ymin)*float(self.wfspinner.get_value())
                 
         # Redraw
         if self.wfautoscale.is_checked() and datarows != 0: # Autoscale if checked

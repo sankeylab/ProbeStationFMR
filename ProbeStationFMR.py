@@ -2240,10 +2240,10 @@ def fire_bsweep(enabled):
             fire_sweep(True)
     
             # Store and plot
-            plot_bsweep.append_data_row(0, plot_fmr[2])
-            plot_bsweep.append_data_row(1, plot_fmr[3])
-            plot_bsweep.append_data_row(2, plot_fmr[4])
-            plot_bsweep.append_data_row(3, plot_fmr[5])
+            plot_bsweep.append_data_row(0, plot_fmr['dR'])
+            plot_bsweep.append_data_row(1, plot_fmr['dR_c'])
+            plot_bsweep.append_data_row(2, plot_fmr['std_dR'])
+            plot_bsweep.append_data_row(3, plot_fmr['std_dR_c'])
           
             # Fill in color plot
             plot_bsweep.update_plots()
@@ -2287,10 +2287,10 @@ def fire_isweep(enabled):
                 fmr_and_plot(True, init_cur = currentvals[k-1], final_cur = currentvals[k], cur_sweep = True, getRL = False)
     
             # Store and plot
-            plot_isweep.append_data_row(0, plot_fmr[2])
-            plot_isweep.append_data_row(1, plot_fmr[3])
-            plot_isweep.append_data_row(2, plot_fmr[4])
-            plot_isweep.append_data_row(3, plot_fmr[5])
+            plot_isweep.append_data_row(0, plot_fmr['dR'])
+            plot_isweep.append_data_row(1, plot_fmr['dR_c'])
+            plot_isweep.append_data_row(2, plot_fmr['std_dR'])
+            plot_isweep.append_data_row(3, plot_fmr['std_dR_c'])
           
             # Fill in color plot
             plot_isweep.update_plots()
@@ -2992,7 +2992,7 @@ def fmr_dd_plot():
     # Do the averaging
     N = n_fire_count.get_value()
     d_fmr['dR'] = ( N*d_fmr['dR'] + fmr_sw ) / (N+1)
-    d_fmr['dR_c'] = d_fmr['dR_c'] - fmr_ref
+    d_fmr['dR_c'] = d_fmr['dR'] - fmr_ref
     
     # Store sweep in the databox (without offset correction) and plot
     global fmr_all    
