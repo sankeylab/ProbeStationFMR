@@ -5,7 +5,6 @@ Created on Thu Apr 13 17:11:20 2017
 @author: admin
 """
 import numpy    as _n
-import _dialogs
 import spinmob as _spinmob
 _d = _spinmob.data
 _g = _spinmob.egg._gui
@@ -234,9 +233,20 @@ class ColorWFPlot(_g.GridLayout):
             
         # Update headers
         self.update_headers()
-            
 
+            
+    def insert_header(self, hkey, value):
+        """
+        Inserts a header in each databox.
+        """
+        for k in self.dbs:
+            k.insert_header(hkey, value)
+                
+        
     def update_headers(self):
+        """
+        Updates the size and bounds headers in all databoxes.
+        """
         for k in self.dbs:
             k.update_headers({'xbounds': self.data_bounds[0:2], 'ybounds': self.data_bounds[2:], \
                               'xsize': self.array_size[0], 'ysize': self.array_size[1]})

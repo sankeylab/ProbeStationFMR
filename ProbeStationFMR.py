@@ -2223,6 +2223,16 @@ def fire_bsweep(enabled):
     
     # Reinitialize databox
     reinit_bsweep_databoxes()
+
+    # Insert headers
+    plot_bsweep.insert_header('Experiment', cfg_sweep['Experiment'])
+    plot_bsweep.insert_header('SigGen', cfg_hardware['RFSource'])
+    plot_bsweep.insert_header('AmpGain', cfg_hardware['Amp/Gain'])
+    plot_bsweep.insert_header('PULM_Period', cfg_sweep['PULM/Period'])
+    plot_bsweep.insert_header('PULM_Repeats', cfg_sweep['PULM/Repeats'])
+    plot_bsweep.insert_header('Iterations', cfg_sweep['Iterations'])
+    plot_bsweep.insert_header('R_L', R_L)
+    plot_bsweep.insert_header('eta', eta)
    
     # Loop over magnetic field steps
     for k in range(cfg_bsweep['Steps']):
@@ -2269,6 +2279,16 @@ def fire_isweep(enabled):
  
     global R_L    
     R_L, V_off = get_RL()
+
+    # Insert headers
+    plot_isweep.insert_header('Experiment', cfg_sweep['Experiment'])
+    plot_isweep.insert_header('SigGen', cfg_hardware['RFSource'])
+    plot_isweep.insert_header('AmpGain', cfg_hardware['Amp/Gain'])
+    plot_isweep.insert_header('PULM_Period', cfg_sweep['PULM/Period'])
+    plot_isweep.insert_header('PULM_Repeats', cfg_sweep['PULM/Repeats'])
+    plot_isweep.insert_header('Iterations', cfg_sweep['Iterations'])
+    plot_isweep.insert_header('R_L', R_L)
+    plot_isweep.insert_header('eta', eta)
    
    # Loop over magnetic field steps
     for k in range(cfg_isweep['Steps']):
