@@ -1263,6 +1263,19 @@ def reinit_isweep_databoxes():
         bnds = [cfg_sweep['Start'], cfg_sweep['Stop'], cfg_isweep['Start'], cfg_isweep['Stop']])
     plot_isweep.clear_databoxes()
 
+
+def interpolate_calib():
+    """
+    Interpolates the power calibration when changing the number of steps in a sweep.
+    """
+    plot_calib['P']     = _n.interp(freqs, plot_calib['f'], plot_calib['P'])
+    plot_calib['P_f']   = _n.interp(freqs, plot_calib['f'], plot_calib['P_f'])
+    plot_calib['P_f_m'] = _n.interp(freqs, plot_calib['f'], plot_calib['P_f_m'])   
+    plot_calib['I_f']   = _n.interp(freqs, plot_calib['f'], plot_calib['I_f']) 
+    plot_calib['f']     = freqs
+    print "Calibration interpolated from previous data"
+    
+
 def cfg_sweep_changed(*b):
     """
     Called whenever we change the settings Dictionary.
@@ -1487,6 +1500,8 @@ cfg_sweep.connect_signal_changed("Experiment", experiment_change)
 # Initialize experiment-dependent settings
 experiment_change()
 
+# Connect this function
+cfg_sweep.connect_signal_changed("Steps", interpolate_calib)
 
 
 #########################
