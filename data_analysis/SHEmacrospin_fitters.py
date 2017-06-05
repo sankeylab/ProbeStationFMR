@@ -29,7 +29,7 @@ gamma = 1.76e11
 kappa = hbar*gamma/(2*vol*e_ch*M_s**2)
 
    
-def fit_spectrum(f, V, sigma = None, absolute_sigma = True, startingpt = None, plot = True, subplot = False, gcf = False):
+def fit_spectrum(f, V, sigma = None, absolute_sigma = True, startingpt = None, plot = True, subplot = False, gcf = False, ylabel = r'$\delta R$' + r'$(\Omega)$'):
     """
     This fits a spectrum to a single asymmetric lorentzian + symmetric lorentzian
     """
@@ -76,7 +76,7 @@ def fit_spectrum(f, V, sigma = None, absolute_sigma = True, startingpt = None, p
             if subplot:
                 plt.plot(fit_x, fit_sy, fit_x, fit_asy)
         plt.xlabel('Frequency (Hz)')
-        plt.ylabel(r'$\delta R$' + r'$(\Omega)$')
+        plt.ylabel(ylabel)
         plt.figtext(0,0.02,r'$f_0 =$' + str(popt[2]/1e9) + "GHz")
         plt.tight_layout()
         
@@ -85,7 +85,7 @@ def fit_spectrum(f, V, sigma = None, absolute_sigma = True, startingpt = None, p
             plt.subplot(gs[1])
             plt.plot(f, fitfunc(f, popt[0], popt[1], popt[2], popt[3], popt[4]) - V)
             plt.xlabel('Frequency (Hz)')
-            plt.ylabel(r'$\delta R$' + r'$(\Omega)$')
+            plt.ylabel(ylabel)
             plt.tight_layout() 
     
     return popt, perr

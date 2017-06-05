@@ -61,6 +61,7 @@ except ImportError:
 # Python ActiveX Client for interfacing with Labview    
 import win32com.client  
 
+pi = _n.pi
 
 
 
@@ -198,7 +199,6 @@ g_controls.new_autorow()
 g_controls.place_object(egg.gui.Label('Iteration:'), alignment=2)
 n_fire_count = g_controls.place_object(egg.gui.NumberBox(0, 1, [0,None],True)).set_width(70)
 
-
 ############################
 ### Tabs - Experiment Config
 ############################
@@ -251,9 +251,11 @@ cfg_hardware.add_parameter("AO/Trigger",        2,      type='int',     limits=(
 cfg_hardware.add_parameter("AO/Range",          10.0,   type='float',   limits=(0,10.0), siPrefix=True, suffix='V',  dec=True, minStep=0.001)
 cfg_hardware.add_parameter("AO/Rate",           1e3,    type='float',   limits=(10,None), siPrefix=True, suffix='Hz', dec=True, minStep=1)
 
-# amplifier
-cfg_hardware.add_parameter("Amp/Gain", 2500, type='int', limits=(0,10000))
-cfg_hardware.add_parameter("Amp/Attenuation", 0, type='float', limits=(None,0) , siPrefix=False, suffix='dB', dec = True, minStep = 0.01)
+# amplifiers
+cfg_hardware.add_parameter("AmpIV/Gain", 2500, type='int', limits=(0,10000))
+cfg_hardware.add_parameter("AmpIV/Attenuation", 0, type='float', limits=(None,0) , siPrefix=False, suffix='dB', dec = True, minStep = 0.01)
+cfg_hardware.add_parameter("AmpMixdown/Gain", 2500, type='int', limits=(0,10000))
+cfg_hardware.add_parameter("AmpMixdown/Attenuation", 0, type='float', limits=(None,0) , siPrefix=False, suffix='dB', dec = True, minStep = 0.01)
 
 # DC source
 cfg_hardware.add_parameter("DC/V2A",           0.02, type='float', limits=(None,None) , siPrefix=True, suffix='A/V', dec=True, minStep=0.01)
@@ -490,12 +492,12 @@ if cam:
 # databox plotters and goodies for the power calibration tab
 tabs_calib   = t_calib  .place_object(egg.gui.TabArea(False), 1,0, row_span=4, alignment=0)
 t_calib_dd   = tabs_calib.add_tab("Driven Dynamics")
-plot_calib   = t_calib_dd.place_object(egg.gui.DataboxPlot("*.calib" , "plotsw_calib.cfg"), column_span=7)
+plot_calib   = t_calib_dd.place_object(egg.gui.DataboxPlot("*.calib" , "plotsw_calib.cfg"), column_span=6)
 plot_calib.button_autoscript.set_checked(False)
 t_calib_dd.new_autorow()
 b_calib       = t_calib_dd  .place_object(egg.gui.Button("Power Calibration"), column = 0, alignment = 0).set_checkable(True)
-b_calibthird  = t_calib_dd  .place_object(egg.gui.Button("Step 3"), column = 5, alignment = 0).set_checkable(True).set_checked(True)
-b_calibreset  = t_calib_dd  .place_object(egg.gui.Button("Reset"), column = 6, alignment = 0)
+b_calibthird  = t_calib_dd  .place_object(egg.gui.Button("Step 3"), column = 4, alignment = 0).set_checkable(True).set_checked(True)
+b_calibreset  = t_calib_dd  .place_object(egg.gui.Button("Reset"), column = 5, alignment = 0)
 
 t_calib_sa    = tabs_calib.add_tab("Spectrum Analyzer")
 plot_calib_sa = t_calib_sa.place_object(ColorWFPlot(size = [cfg_sweep['Steps'], cfg_pcalib['SA_Calib/PowerSteps']], \
@@ -602,7 +604,7 @@ l_perf_acqtime   = g_perf.place_object(egg.gui.Label("Acquisition time: --s"), c
 l_perf_dutycyc   = g_perf.place_object(egg.gui.Label("Duty cycle: --%"), column = 1)
 l_perf_breakdown = g_perf.place_object(egg.gui.Label("ai Start: --s | ao Start: --s | ao Wait: --s | ai Read: --s | Analysis: --s"), column = 2, alignment = 2)
 g_perf.place_object(egg.gui.Label("|||||"), column = 3, alignment=2)
-l_rliac_fmr      = g_perf  .place_object(egg.gui.Label("Device resistance = -----Ohm, AC current = -----mA, eta = -----Ohm/mA^2"), column = 4, alignment=2)
+l_rliac_fmr      = g_perf  .place_object(egg.gui.Label("Device resistance = -----Ohm, Est. AC current = -----mA, eta = -----Ohm/mA^2"), column = 4, alignment=2)
 
 
 
@@ -689,7 +691,7 @@ def b_send_sweep_clicked(*a):
     """  
     plt.figure(1)
     if cfg_sweep["Experiment"] == "Driven Dynamics":
-        FMRfit.fit_spectrum(plot_sweep['f'], plot_sweep['V_sinc'], gcf=True)
+        FMRfit.fit_spectrum(plot_sweep['f'], plot_sweep['V_sinc'], gcf=True, ylabel = r'$\Delta V$')
         
     #    # In-phase plot
     #    plt.title("Rectified Voltage vs. Frequency (In-Phase Component)")
@@ -824,8 +826,8 @@ def b_calibreset_clicked(*a):
     f_calib, p_calib, p_factor = power_calibration()
     p_factor_mixed = [1]*len(p_factor)
     
-    plot_calib.plot()
     reinit_calib_databoxes()
+    plot_calib.plot()
     print "Calibration reset."    
     
 b_calibreset.signal_clicked.connect(b_calibreset_clicked)
@@ -962,17 +964,31 @@ def init_dc(cur):
     
     # Build time steps vector
     tsteps = int(cfg_sweep['PULM/Period'] * cfg_sweep['PULM/Repeats'] * cfg_hardware['AO/Rate'])  
+    ao_t = _n.linspace(1/cfg_hardware['AO/Rate'], cfg_sweep['PULM/Period']*cfg_sweep['PULM/Repeats'], 1.0*cfg_sweep['PULM/Period']*cfg_sweep['PULM/Repeats']*cfg_hardware['AO/Rate'])
     
-    # Build DC currents vector. Finish off with zero current.
+    # Calculate AO voltage corresponding to wanted current
     dc_volt = cur * (R_L + cfg_hardware["DCSourceR"])
-    ao_dc = _n.zeros(tsteps) + dc_volt
+    
+    # For driven dynamics, use a constant DC current
+    if cfg_sweep["Experiment"] == "Driven Dynamics":
+        ao_dc = _n.zeros(tsteps) + dc_volt
+        
+    # For the spectrum analyzer, chop the DC current
+    elif cfg_sweep["Experiment"] == "Spectrum Analyzer":
+        ao_dc = _n.zeros(tsteps)
+        for n in range(0,int(tsteps)) :
+            if _n.ceil(2*ao_t[n]/(cfg_sweep['PULM/Period'])) % 2 == 0 \
+            and n != 0: # first and last points are on the low state
+                ao_dc[n] = dc_volt
+            else:
+                ao_dc[n] = 0.0        
 
     return ao_dc
-
+    
 
 def init_fourpt(cur, mod=0):
     """
-    Builds the DC output square wave vector for four-point measurement.
+    Builds the DC output sine wave vector for four-point measurement.
     The arguments are the nominal applied current and the modulation (both in amperes)
     """   
     global R_L
@@ -1009,7 +1025,7 @@ def init_sweep_arrays(dc_cur = cfg_sweep['DC_Current']):
     
     # Build DC current and four-point measurement arrays
     ao_dc = init_dc(dc_cur)
-          
+         
     # Plot new analog output curve
     #ao_plot.clear()    
     #ao_curve = egg.pyqtgraph.PlotCurveItem(ao_t, ao_sw, stepMode=False, fillLevel=0)
@@ -1026,27 +1042,33 @@ def init_sweep_arrays(dc_cur = cfg_sweep['DC_Current']):
     else:
         logbounds = [_n.log10(cfg_sweep['Start']), _n.log10(cfg_sweep['Stop'])]
         freqs  = _n.logspace(logbounds[0], logbounds[1], cfg_sweep['Steps']) 
-        
+       
     # Build power vector (accounting for calibration and saturation)
-    if cfg_sweep['PowerMode'] == 'Constant':
+    if cfg_sweep["Experiment"] == "Driven Dynamics":
+        if cfg_sweep['PowerMode'] == 'Constant':
+            pows = [cfg_sweep['Power']]*len(freqs)
+            pows_corr = _n.interp(freqs, f_calib, p_factor)**-1.0
+            
+        elif cfg_sweep['PowerMode'] == 'Calibrated':
+            #print "I didn't break everything" #Adrian, it doesn't seem to always load p_factor properly
+            p_precalib  = -10*_n.log10(_n.multiply(p_factor, p_factor_mixed))
+            pows = _n.interp(freqs, f_calib, p_precalib) + cfg_sweep['Power']
+            if max(pows) > cfg_hardware['SaturationPow']: 
+                #Edited to include SatPow, Adrian
+                print "Power saturated (max calibrated power = " + str(max(pows)) + "dBm)" 
+                pows[ _n.where(pows>cfg_hardware['SaturationPow']) ] = cfg_hardware['SaturationPow'] #Adrian
+            pows_corr = _n.array([1]*len(freqs))**-1.0
+
+        elif cfg_sweep['PowerMode'] == 'Mixed':
+            pows = _n.interp(freqs, f_calib, p_calib) + cfg_sweep['Power']
+            pows_corr = _n.interp(freqs, f_calib, p_factor_mixed)**-1.0
+    else:
         pows = [cfg_sweep['Power']]*len(freqs)
-        pows_corr = _n.interp(freqs, f_calib, p_factor)**-1.0
-    elif cfg_sweep['PowerMode'] == 'Calibrated':
-        #print "I didn't break everything" #Adrian, it doesn't seem to always load p_factor properly
-        p_precalib  = -10*_n.log10(_n.multiply(p_factor, p_factor_mixed))
-        pows = _n.interp(freqs, f_calib, p_precalib) + cfg_sweep['Power']
-        if max(pows) > cfg_hardware['SaturationPow']: #Edited to include SatPow, Adrian
-           print "Power saturated (max calibrated power = " + str(max(pows)) + "dBm)" 
-           pows[ _n.where(pows>cfg_hardware['SaturationPow']) ] = cfg_hardware['SaturationPow'] #Adrian
-        pows_corr = _n.array([1]*len(freqs))**-1.0
-    elif cfg_sweep['PowerMode'] == 'Mixed':
-        pows = _n.interp(freqs, f_calib, p_calib) + cfg_sweep['Power']
-        pows_corr = _n.interp(freqs, f_calib, p_factor_mixed)**-1.0
+        pows_corr = [1]*len(freqs)
     
     return ao_t, ao_sw, ao_dc, cos_li, sin_li, freqs, pows, pows_corr
     
-# Do it once when the software is initialized    
-init_sweep_arrays()
+
 
 
 def init_iv_arrays():
@@ -1071,10 +1093,6 @@ def init_iv_arrays():
     
     return ao_fourpt, cos_iv, sin_iv, curs
     
-# Do it once when the software is initialized    
-init_iv_arrays()
-
-
 
 def init_bsweep_arrays():
     """
@@ -1115,9 +1133,6 @@ def init_bsweep_arrays():
     except IOError:
         if cfg_bsweep["TrajectoryFile"] != "": print "No such file or directory: " + cfg_bsweep["TrajectoryFile"]
         
-# Do it once when the software is initialized    
-init_bsweep_arrays()
-
 
 def init_isweep_arrays():
     """
@@ -1126,23 +1141,17 @@ def init_isweep_arrays():
     global currentvals    
     currentvals = _n.linspace(cfg_isweep["Start"], cfg_isweep["Stop"], cfg_isweep["Steps"])
 
-# Do it once when the software is initialized    
-init_isweep_arrays()
-
 
 def init_sa_calib_arrays(freq_ref = 0, power = -100):
     """
     Initializes the various waveforms and arrays required for the spectrum analyzer
     power calibration curve acquisition and analysis
     """ 
-    global freqs_calib, pows_calib
+    global f_calib, pows_calib
     
-    freqs_calib = _n.linspace(freq_ref-cfg_pcalib["SA_Calib/Range"], freq_ref+cfg_pcalib["SA_Calib/Range"], cfg_pcalib["SA_Calib/Steps"])
-    nsteps = len(freqs_calib)    
+    f_calib = _n.linspace(freq_ref-cfg_pcalib["SA_Calib/Range"], freq_ref+cfg_pcalib["SA_Calib/Range"], cfg_pcalib["SA_Calib/Steps"])
+    nsteps = len(f_calib)    
     pows_calib  = nsteps*[power]
-
-# Do it once when the software is initialized    
-init_sa_calib_arrays()
 
 
 def reinit_sweep_databoxes():
@@ -1151,6 +1160,7 @@ def reinit_sweep_databoxes():
     """    
     ### clear out the old data, reinitialize databoxes
     plot_raw.clear()
+    plot_sweep.clear()
         
     # Reinitialize raw databox
     plot_raw['t']    = ao_t
@@ -1189,12 +1199,14 @@ def reinit_fmr_databoxes():
         plot_fmr['dR_c'] = [0]*cfg_sweep['Steps']   
         plot_fmr['std_dR'] = [0]*cfg_sweep['Steps']
         plot_fmr['std_dR_c'] = [0]*cfg_sweep['Steps']
+        
     elif cfg_sweep["Experiment"] == "Spectrum Analyzer":
         plot_fmr['f']  = freqs
         plot_fmr['P_out'] = [0]*cfg_sweep['Steps']
         plot_fmr['P_in']  = [0]*cfg_sweep['Steps']
         plot_fmr['std_dR'] = [0]*cfg_sweep['Steps']
         plot_fmr['std_dR_c'] = [0]*cfg_sweep['Steps']     
+
 
 def reinit_iv_databoxes():  
     """
@@ -1246,6 +1258,9 @@ def reinit_calib_databoxes():
         
         global f_calib_sa
         f_calib_sa = lambda x,y: y
+
+# Run it once to load some dummy data
+reinit_calib_databoxes()
         
 def reinit_bsweep_databoxes():
     """
@@ -1268,13 +1283,25 @@ def interpolate_calib():
     """
     Interpolates the power calibration when changing the number of steps in a sweep.
     """
-    plot_calib['P']     = _n.interp(freqs, plot_calib['f'], plot_calib['P'])
-    plot_calib['P_f']   = _n.interp(freqs, plot_calib['f'], plot_calib['P_f'])
-    plot_calib['P_f_m'] = _n.interp(freqs, plot_calib['f'], plot_calib['P_f_m'])   
-    plot_calib['I_f']   = _n.interp(freqs, plot_calib['f'], plot_calib['I_f']) 
-    plot_calib['f']     = freqs
-    print "Calibration interpolated from previous data"
-    
+    if cfg_sweep["Experiment"] == "Driven Dynamics":
+        plot_calib['P']     = _n.interp(freqs, plot_calib['f'], plot_calib['P'])
+        plot_calib['P_f']   = _n.interp(freqs, plot_calib['f'], plot_calib['P_f'])
+        plot_calib['P_f_m'] = _n.interp(freqs, plot_calib['f'], plot_calib['P_f_m'])   
+        plot_calib['I_f']   = _n.interp(freqs, plot_calib['f'], plot_calib['I_f']) 
+        plot_calib['f']     = freqs
+        
+        global f_calib, p_factor, p_factor_mixed
+        f_calib  = plot_calib['f']
+        p_factor = plot_calib['P_f']
+        p_factor_mixed = plot_calib['P_f_m']
+        
+    #elif cfg_sweep["Experiment"] == "Spectrum Analyzer":
+        #sa_p_out
+
+# Connect this function and run once
+cfg_sweep.connect_signal_changed("Steps", interpolate_calib)
+interpolate_calib()    
+
 
 def cfg_sweep_changed(*b):
     """
@@ -1385,6 +1412,7 @@ cfg_isweep.connect_any_signal_changed(cfg_isweep_changed)
 #print "who needs pants"
 cfg_isweep_changed()
 
+
 def cfg_hardware_changed(*a):
     """
     Called whenever we change the settings Dictionary.
@@ -1409,7 +1437,7 @@ def RL_changed(*a):
     """
     global R_L
     R_L = 0
-    l_rliac_fmr.set_text("Device resistance = -----Ohm, AC current = -----mA")
+    l_rliac_fmr.set_text("Device resistance = -----Ohm, Est. AC current = -----mA")
 #cfg_sweep.connect_signal_changed('DC_Current', RL_changed)
 
 
@@ -1420,8 +1448,8 @@ def Iac_changed(*a):
     if I_ac != 1.0:
         get_Iac()
         a = l_rliac_fmr.get_text()
-        b = a.split("AC current = ")[0]
-        l_rliac_fmr.set_text(b + "AC current = " + str(round(I_ac*100000)/100) + "mA")
+        b = a.split("Est. AC current = ")[0]
+        l_rliac_fmr.set_text(b + "Est. AC current = " + str(round(I_ac*100000)/100) + "mA")
 cfg_sweep.connect_signal_changed('Power', Iac_changed)    
 
     
@@ -1469,6 +1497,8 @@ def experiment_change(*a):
         b_pulm.set_checked(True)
         b_pulm.set_text("PULM On")        
         
+        interpolate_calib()  
+        
     if exp == "Spectrum Analyzer":
         # Change signal generator level
         cfg_sweep['Power'] = 10   
@@ -1495,13 +1525,20 @@ def experiment_change(*a):
         # Turn PULM button off
         b_pulm.set_checked(False)
         b_pulm.set_text("PULM Off")
+        
+        init_sa_calib_arrays() 
+        
+    # Load a bunch of dummy data once when the software is initialized    
+    init_sweep_arrays()
+    init_iv_arrays()
+    init_bsweep_arrays()
+    init_isweep_arrays()         
+        
 cfg_sweep.connect_signal_changed("Experiment", experiment_change)    
 
 # Initialize experiment-dependent settings
 experiment_change()
 
-# Connect this function
-cfg_sweep.connect_signal_changed("Steps", interpolate_calib)
 
 
 #########################
@@ -1533,7 +1570,7 @@ def ao_task_pulm():
     # Get the channel names
     ao_channel_names = _daqmx.get_ao_channel_names(cfg_hardware['AO/Device'])  
 
-    # Set up the pulse train output    
+    # Set up the pulse train output. (for the spectrum analyzer, ao_dc is chopped rather than ao_sw)  
     ao = _daqmx.ao_task(ao_trigger_source = "/"+cfg_hardware['AO/Device']+"/100kHzTimebase",
                         ao_channels  = [ao_channel_names[cfg_hardware['AO/PULM']], ao_channel_names[cfg_hardware['AO/DC']]],
                         ao_waveforms = [ao_sw, ao_dc],
@@ -1654,7 +1691,7 @@ def ai_task_fourpt():
     return ai
 
 
-def current_ramp(cur_i, cur_f, nsamps = 10000):
+def current_ramp(cur_i, cur_f):
     """
     Sets up the analog input task to ramp the DC current from one value to another. The process takes (nsamps/10000)s.
     """        
@@ -1670,7 +1707,11 @@ def current_ramp(cur_i, cur_f, nsamps = 10000):
     ao_channel_names = _daqmx.get_ao_channel_names(cfg_hardware['AO/Device'])      
     ao_rate = cfg_hardware["AO/Rate"]
 
-    ao_ramp = _n.linspace(cur_i * (R_L + cfg_hardware["DCSourceR"]), cur_f * (R_L + cfg_hardware["DCSourceR"]), int(ao_rate*ramp_time)) 
+    ao_t = _n.linspace(0, ramp_time, int(ao_rate*ramp_time))
+    
+    ao_ramp = ( (cur_i - cur_f) * _n.cos(2*pi*ao_t / (2*ramp_time)) + (cur_i + cur_f) ) * (R_L + cfg_hardware["DCSourceR"]) / 2
+
+    #ao_ramp = _n.linspace(cur_i * (R_L + cfg_hardware["DCSourceR"]), cur_f * (R_L + cfg_hardware["DCSourceR"]), int(ao_rate*ramp_time)) 
  
     if round(_n.abs(cur_i*100000.0-cur_f*100000.0)) != 0:
         # Set up the pulse train output    
@@ -1694,6 +1735,7 @@ def current_ramp(cur_i, cur_f, nsamps = 10000):
 ########################
 ### ACQUISITION ROUTINES
 ########################
+
 def sweep_and_plot():
     """
     Self-explanatory.
@@ -1704,7 +1746,7 @@ def sweep_and_plot():
     # Insert headers
     plot_sweep.insert_header('Experiment', cfg_sweep['Experiment'])
     plot_sweep.insert_header('SigGen', cfg_hardware['RFSource'])
-    plot_sweep.insert_header('AmpGain', cfg_hardware['Amp/Gain'])
+    plot_sweep.insert_header('AmpMixdownGain', cfg_hardware['AmpMixdown/Gain'])
     plot_sweep.insert_header('I_dc', cfg_sweep['DC_Current']) 
     plot_sweep.insert_header('PULM_Period', cfg_sweep['PULM/Period'])
     plot_sweep.insert_header('PULM_Repeats', cfg_sweep['PULM/Repeats'])
@@ -1785,10 +1827,16 @@ def sweep_and_plot():
             plot_sweep.plot()
             
         elif cfg_sweep["Experiment"] == "Spectrum Analyzer":
+            # Get height of the chopped signal
+            V_sin, V_cos = boxcar_analysis(y)
             V_mean = _n.mean(y[0])
             V_rms  = _n.sqrt(_n.mean(y[0]**2))
-            P_mean = 10**(_n.interp(_n.mean(y[0]), cd_calib[:,1], cd_calib[:,0]) / 10)  # power in milliwatts
-            plot_sweep.append_data_point([freqs[n], V_mean, V_rms, P_mean])
+            
+            # Get difference in power between levels of chopped signal
+            P_mean_low  = 10**(_n.interp(V_mean + V_sin/2.0, cd_calib[:,1], cd_calib[:,0]) / 10)  # power in milliwatts
+            P_mean_high = 10**(_n.interp(V_mean - V_sin/2.0, cd_calib[:,1], cd_calib[:,0]) / 10)
+            plot_sweep.append_data_point([freqs[n], V_mean, V_rms, P_mean_high - P_mean_low])
+            
             if n == 0: 
                 plot_sweep.insert_header("V_off", V_off)     
             plot_sweep.plot()
@@ -1832,7 +1880,7 @@ def iv_and_plot():
     # Insert headers
     plot_iv.insert_header('Experiment', cfg_sweep['Experiment'])
     plot_iv.insert_header('SigGen', cfg_hardware['RFSource'])
-    plot_iv.insert_header('AmpGain', cfg_hardware['Amp/Gain'])
+    plot_iv.insert_header('AmpMixdownGain', cfg_hardware['AmpMixdown/Gain'])
     plot_iv.insert_header('ModPeriod', cfg_fourpt['ModPeriod'])
     plot_iv.insert_header('ModRepeats', cfg_fourpt['ModRepeats'])
     plot_iv.insert_header('ModAmp', cfg_fourpt['ModAmp'])
@@ -1892,8 +1940,9 @@ def iv_and_plot():
     current_ramp(curtemp,0)  
     
     # Fit resistance distribution to a parabola
-    popt, perr = fit_dVdI(curs, plot_iv[4])
-    eta = popt[1]
+    if len(curs) == len(plot_iv[4]): 
+        popt, perr = fit_dVdI(curs, plot_iv[4])
+        eta = popt[1]
     
     # Update resistance label
     l_imp_iv.set_text("Offset Voltage = " + str(_n.round(100000*offset)/100) + "mV | Mean Resistance = " + str(_n.round(100*R_L)/100) + "Ohm, eta = " + "%.2f" % (eta/1e6) + "Ohm/(mA)^2")        
@@ -1950,7 +1999,7 @@ def sa_calib_step_and_plot():
         V_mean = _n.mean(y[0])
         V_rms  = _n.sqrt(_n.mean(y[0]**2))
         P_mean = 10**(_n.interp(_n.mean(y[0]), cd_calib[:,1], cd_calib[:,0]) / 10)  # power in milliwatts
-        plot_sweep.append_data_point([freqs_calib[n], V_mean, V_rms, P_mean])
+        plot_sweep.append_data_point([f_calib[n], V_mean, V_rms, P_mean])
         if n == 0: 
             plot_sweep.insert_header("V_off", V_off)     
         plot_sweep.plot()
@@ -1997,7 +2046,7 @@ def get_RL(dc_cur = 0.0):
 
     #print dVdI, R_L, I_ac   
     
-    l_rliac_fmr.set_text("Device resistance = " + str(round(R_L*10)/10) + "Ohm, AC current = " + str(round(I_ac*100000)/100) + "mA")
+    l_rliac_fmr.set_text("Device resistance = " + str(round(R_L*10)/10) + "Ohm, Est. AC current = " + str(round(I_ac*100000)/100) + "mA")
     
     window.process_events()
     
@@ -2024,7 +2073,7 @@ def fire_quicksweep(enabled):
     plot_sweep.insert_header('eta', eta)
         
     # Initialize acquisition and analysis arrays
-    ao_t, ao_sw, ao_dc, cos_li, sin_li, freqs, pows, pows_corr = init_sweep_arrays()
+    ao_t, ao_sw, ao_dc, cos_li, sin_li, freqs, pows, pows_corr = init_sweep_arrays(cfg_sweep["DC_Current"])
 
     # Do the slow current ramp
     current_ramp(0,cfg_sweep["DC_Current"])    
@@ -2087,13 +2136,13 @@ def fmr_and_plot(enabled, init_cur = 0.0, final_cur = 0.0, cur_sweep = False, ge
 
     if getRL and b_resis.get_value():
         global R_L    
-        time.sleep(3) 
+        #time.sleep(3) 
         R_L, V_off = get_RL(init_cur)
               
     # Insert headers
     plot_fmr.insert_header('Experiment', cfg_sweep['Experiment'])
     plot_fmr.insert_header('SigGen', cfg_hardware['RFSource'])
-    plot_fmr.insert_header('AmpGain', cfg_hardware['Amp/Gain'])
+    plot_fmr.insert_header('AmpMixdownGain', cfg_hardware['AmpMixdown/Gain'])
     plot_fmr.insert_header('I_dc', final_cur) 
     plot_fmr.insert_header('PULM_Period', cfg_sweep['PULM/Period'])
     plot_fmr.insert_header('PULM_Repeats', cfg_sweep['PULM/Repeats'])
@@ -2242,7 +2291,7 @@ def fire_bsweep(enabled):
     # Insert headers
     plot_bsweep.insert_header('Experiment', cfg_sweep['Experiment'])
     plot_bsweep.insert_header('SigGen', cfg_hardware['RFSource'])
-    plot_bsweep.insert_header('AmpGain', cfg_hardware['Amp/Gain'])
+    plot_bsweep.insert_header('AmpMixdownGain', cfg_hardware['AmpMixdown/Gain'])
     plot_bsweep.insert_header('PULM_Period', cfg_sweep['PULM/Period'])
     plot_bsweep.insert_header('PULM_Repeats', cfg_sweep['PULM/Repeats'])
     plot_bsweep.insert_header('Iterations', cfg_sweep['Iterations'])
@@ -2298,7 +2347,7 @@ def fire_isweep(enabled):
     # Insert headers
     plot_isweep.insert_header('Experiment', cfg_sweep['Experiment'])
     plot_isweep.insert_header('SigGen', cfg_hardware['RFSource'])
-    plot_isweep.insert_header('AmpGain', cfg_hardware['Amp/Gain'])
+    plot_isweep.insert_header('AmpMixdownGain', cfg_hardware['AmpMixdown/Gain'])
     plot_isweep.insert_header('PULM_Period', cfg_sweep['PULM/Period'])
     plot_isweep.insert_header('PULM_Repeats', cfg_sweep['PULM/Repeats'])
     plot_isweep.insert_header('Iterations', cfg_sweep['Iterations'])
@@ -2381,15 +2430,15 @@ def fire_calib_dd():
     n_fire_count.set_value(0)
     
     # Reset the calibration and reinitialize the power calibration databox
-    ao_t, ao_sw, ao_dc, cos_li, sin_li, freqs, pows, pows_corr = init_sweep_arrays()
-    b_calibreset_clicked()    
+    b_calibreset_clicked() 
+    ao_t, ao_sw, ao_dc, cos_li, sin_li, freqs, pows, pows_corr = init_sweep_arrays()   
     global calib_factors		
     calib_factors = _n.array([[1.0]*cfg_sweep['Steps']] * 3)
 
     # Insert headers    
     plot_calib.insert_header('Experiment', cfg_sweep['Experiment'])
     plot_calib.insert_header('SigGen', cfg_hardware['RFSource'])
-    plot_calib.insert_header('AmpGain', cfg_hardware['Amp/Gain'])
+    plot_calib.insert_header('AmpMixdownGain', cfg_hardware['AmpMixdown/Gain'])
     plot_calib.insert_header('Mode', cfg_pcalib["DD_Calib/Mode"])
     plot_calib.insert_header('Power', cfg_sweep["Power"])
     plot_calib.insert_header('I_DC', cfg_pcalib["DD_Calib/DC_Current"])
@@ -2401,7 +2450,7 @@ def fire_calib_dd():
     
     # Ramp the current back down    
     RL_changed()
-    current_ramp(0,0)    
+#    current_ramp(0,0)    
 
     # Prompt user to move magnet to n*pi/2 radians    
     w_magnet_1 = egg.gui.Window("MAGNET!")
@@ -2516,10 +2565,10 @@ def fire_calib_dd():
         
         # If we do background subtraction, do the same procedure for the opposite current direction
         # First define a variable that tells us if we'll be at +ve or -ve current after the full step 1                      
-        invert_cur  = 1    
+        invert_cur  = 1.0    
         
         if cfg_pcalib["DD_Calib/Mode"] == "Background Subtraction":  
-            invert_cur = -1            
+            invert_cur = -1.0            
             
             # Do the slow current ramp
             current_ramp(cfg_pcalib["DD_Calib/DC_Current"], -cfg_pcalib["DD_Calib/DC_Current"]) 
@@ -2545,12 +2594,12 @@ def fire_calib_dd():
        
         # Get the calibration data
         global f_calib, p_calib, p_factor, p_factor_mixed
-        V_calib = (V_calib_pos - V_calib_neg)/2
+        V_calib = (V_calib_pos - V_calib_neg)/(1.5 - invert_cur/2.0) # Divide by 2 (1) if (not) doing background subtraction
         f_calib, p_calib, p_factor = power_calibration(freqs,V_calib)
         p_factor_mixed = [1]*len(p_factor)  
         
         # Get the output current (calculated for an output power of 0dBm)
-        plot_calib['I_f'] = _n.sqrt( 2/(3*eta*cfg_pcalib["DD_Calib/DC_Current"]) * V_calib / cfg_hardware["Amp/Gain"]) * 10**(-cfg_sweep["Power"]/20) 
+        plot_calib['I_f'] = _n.sqrt( 2/(3*eta*cfg_pcalib["DD_Calib/DC_Current"]) * V_calib / cfg_hardware["AmpMixdown/Gain"]) * 10**(-cfg_sweep["Power"]/20) 
         
         # Break if calibration button is not checked
         if not b_calib.is_checked(): return
@@ -2596,7 +2645,7 @@ def fire_calib_dd():
                 V_calib_neg = plot_sweep['V_sin']                   
                    
             # Get the resulting power factor
-            V_calib = invert_cur*(V_calib_pos - V_calib_neg)/2
+            V_calib = invert_cur*(V_calib_pos - V_calib_neg)/(1.5 - invert_cur/2.0)
             f_calib, p_c2, p_factor_mixed = power_calibration(freqs,V_calib)
 
             # Recalculate output current (obtained for an output power of 0dBm)
@@ -2621,7 +2670,9 @@ def fire_calib_dd():
         n_fire_count.increment(1)        
         
         # Ramp the current back down    
-        current_ramp(cfg_pcalib["DD_Calib/DC_Current"],0) 
+        pmode = 1
+        if cfg_sweep["PowerMode"] == "Constant": pmode = invert_cur
+        current_ramp(pmode * cfg_pcalib["DD_Calib/DC_Current"],0) 
 
     # Reset RF and DC currents values
     cfg_sweep['DC_Current'] = curtemp
@@ -2944,7 +2995,7 @@ def fire_calib_sa():
             init_sa_calib_arrays(freqs[n], powers[k])
             
             # Initialize frequency and power arrays on calibration signal generator, plot and save
-            b.list_man_setup(freqs_calib, pows_calib)
+            b.list_man_setup(f_calib, pows_calib)
             sa_calib_step_and_plot()
             plot_sweep.save_file(save_folder+"/"+str(powers[k])+'dBm_'+str(n)+".swp")  
             b.quit_list_mode()
@@ -2997,10 +3048,7 @@ def fire_calib_sa():
 def fire_calib():
     if cfg_sweep["Experiment"] == "Driven Dynamics":
         fire_calib_dd()
-#        if cfg_pcalib["DD_Calib/Mode"] == "High Damping":
-#            fire_calib_dd_damp()
-#        elif cfg_pcalib["DD_Calib/Mode"] == "Background Subtraction":
-#            fire_calib_dd_bckg()
+
     elif cfg_sweep["Experiment"] == "Spectrum Analyzer":
         fire_calib_sa()
     
@@ -3022,7 +3070,7 @@ def fmr_dd_plot():
     # Calculate the FMR signal from the last sweep (including background subtraction)
     global fmr_ref  
     V_nonres = plot_sweep.headers['V_nonres']
-    fmr_sw   = 2/I_ac * (d_sw['V_sinc']-V_nonres) / cfg_hardware['Amp/Gain'] 
+    fmr_sw   = 2/I_ac * (d_sw['V_sinc']-V_nonres) / cfg_hardware['AmpMixdown/Gain'] 
     
     # Do the averaging
     N = n_fire_count.get_value()
@@ -3032,9 +3080,9 @@ def fmr_dd_plot():
     # Store sweep in the databox (without offset correction) and plot
     global fmr_all    
     if N == 0:    
-        fmr_all = 2/I_ac * d_sw['V_sinc'] / cfg_hardware['Amp/Gain'] 
+        fmr_all = 2/I_ac * d_sw['V_sinc'] / cfg_hardware['AmpMixdown/Gain'] 
     else:
-        fmr_all = _n.row_stack([fmr_all, 2/I_ac * d_sw['V_sinc'] / cfg_hardware['Amp/Gain']])
+        fmr_all = _n.row_stack([fmr_all, 2/I_ac * d_sw['V_sinc'] / cfg_hardware['AmpMixdown/Gain']])
     plot_fmr.plot()
     
     # let the user interface update        
@@ -3063,7 +3111,8 @@ def fmr_sa_plot():
         #fmr_sw = _n.append( fmr_sw, f_calib_sa(freqs[k],d_sw['P_out'][k]) )   
         
         # Calculate the input power from the gain look-up table obtained during the calibration        
-        p_in = d_sw['P_out'][k] / _n.interp(d_sw['P_out'][k], sa_p_out[:,k], sa_gain[:,k])
+        #p_in = d_sw['P_out'][k] / _n.interp(d_sw['P_out'][k], sa_p_out[:,k], sa_gain[:,k])
+        p_in = d_sw['P_out'][k]
 #        print p_in, d_sw['P_out'][k]
 #        print _n.interp(d_sw['P_out'][k], sa_p_out[:,k], sa_gain[:,k]), sa_p_out[:,k], sa_gain[:,k]
         fmr_sw = _n.append( fmr_sw,  p_in )
@@ -3195,8 +3244,8 @@ def fourpt_analysis(y, cur, offset=0):
     num_periods = (cfg_fourpt["ModRepeats"] - cfg_fourpt["PeriodCutoff"])
     dVdI_namp_cos = _n.sum(_n.multiply(V_dc,cos_iv_trunc)) / integration_index / (cfg_fourpt["ModAmp"]/2) / num_periods
     dVdI_namp_sin = _n.sum(_n.multiply(V_dc,sin_iv_trunc)) / integration_index / (cfg_fourpt["ModAmp"]/2) / num_periods
-    dVdI_cos  = _n.sum(_n.multiply(V_ac,cos_iv_trunc))     / integration_index / (cfg_fourpt["ModAmp"]/2) / num_periods / cfg_hardware["Amp/Gain"]  * 10**(-cfg_hardware["Amp/Attenuation"]/10)
-    dVdI_sin  = _n.sum(_n.multiply(V_ac,sin_iv_trunc))     / integration_index / (cfg_fourpt["ModAmp"]/2) / num_periods / cfg_hardware["Amp/Gain"]  * 10**(-cfg_hardware["Amp/Attenuation"]/10)
+    dVdI_cos  = _n.sum(_n.multiply(V_ac,cos_iv_trunc))     / integration_index / (cfg_fourpt["ModAmp"]/2) / num_periods / cfg_hardware["AmpIV/Gain"]  * 10**(-cfg_hardware["AmpIV/Attenuation"]/10)
+    dVdI_sin  = _n.sum(_n.multiply(V_ac,sin_iv_trunc))     / integration_index / (cfg_fourpt["ModAmp"]/2) / num_periods / cfg_hardware["AmpIV/Gain"]  * 10**(-cfg_hardware["AmpIV/Attenuation"]/10)
     dVdI_namp = _n.sqrt(dVdI_namp_cos**2 + dVdI_namp_sin**2)
     dVdI  = _n.sqrt(dVdI_cos**2 + dVdI_sin**2)
     
@@ -3209,14 +3258,14 @@ def sa_calib_integration(y, f_lo, pad = 0.2):
     """
     # Get the index numbers for all points that we will use to get the baseline level of each plot    
     f_c = cfg_hardware['SA/LowPass'] # corner frequency of the low-pass filter
-    left_index  = ( _n.abs( freqs_calib - (f_lo - (1+pad)*f_c) ) ).argmin()    
-    right_index = ( _n.abs( freqs_calib - (f_lo + (1+pad)*f_c) ) ).argmin()    
+    left_index  = ( _n.abs( f_calib - (f_lo - (1+pad)*f_c) ) ).argmin()    
+    right_index = ( _n.abs( f_calib - (f_lo + (1+pad)*f_c) ) ).argmin()    
     print left_index, right_index
     power_baseline = _n.mean( _n.concatenate( (y[:left_index:], y[right_index::] ) ) )
     print ("Baseline = " + str(power_baseline))
     
     # Do the integration over the rest of the array
-    p_integrated = _n.sum( y-power_baseline )  * (freqs_calib[1]-freqs_calib[0]) / (2*f_c)
+    p_integrated = _n.sum( y-power_baseline )  * (f_calib[1]-f_calib[0]) / (2*f_c)
     print p_integrated        
     
     return p_integrated, power_baseline
