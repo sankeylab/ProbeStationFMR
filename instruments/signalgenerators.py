@@ -188,6 +188,8 @@ class Anapico():
             self.write("POW:MODE FIX")
             self.write("OUTP OFF")
         
+        self.write("OUTP OFF")
+        
 
 
 

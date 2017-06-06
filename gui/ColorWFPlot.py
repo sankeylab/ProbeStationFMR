@@ -210,6 +210,14 @@ class ColorWFPlot(_g.GridLayout):
         for k in self.dbs: 
             k.clear()
        
+    def discard_databoxes(self):
+        """
+        Discards all the databoxes in the widget.
+        """
+        self.dbs=[]
+        cbox_len = len(self.dbs_combobox.get_all_items())  
+        for k in range(cbox_len): self.dbs_combobox.remove_item(0)
+       
     def set_size_and_bounds(self, size, bnds = [0,1,0,1]):
         """
         Sets the size and bounds of the final data array.
